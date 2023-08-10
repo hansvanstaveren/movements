@@ -1,0 +1,174 @@
+#
+# Schemaas 3 rondes
+#
+3 3 gen:mit:3 1-3/4-6 basis
+#
+# Schemaas 4 rondes
+# rot2 betekent twee groepen tegelijk doordraaien
+#
+3 4 generate:expanded-mitchell:3:4 3-6
+4 4 gen:dw-mitchell:4 1-4/5-8 basis
+5 4 mit4+1.asc 1-4/5-8 rot2
+6 4 mit4+2.asc 1-4/5-8 rot2
+7 4 mit4+3.asc 1-4/5-8 rot2
+8 4 mit2x4.asc 1-4/9-12/5-8/13-16 basis-groot
+#
+# Schemaas 5 rondes
+#
+3 5 howell-3.csv 1-5
+4 5 generate:expanded-mitchell:4:5 4-8
+5 5 generate:vasneg:5:5:X o1-10/e1-10 basis
+6 5 generate:vasneg:6:5:X o1-10/e1-10
+7 5 generate:vasneg:7:5:X o1-10/e1-10
+8 5 generate:vasneg:8:5:X o1-10/e1-10
+9 5 generate:vasneg:9:5:X o1-10/e1-10
+#
+# Schemaas 6 rondes, vaak problematisch
+#
+4 6 rhwll-4-6ren.asc 1-6
+5 6 generate:expanded-mitchell:5:6 5-10
+6 6 gen:mit:6 1-6/7-12 basis
+7 6 mit6+1.asc 1-6/7-12 rot2
+8 6 mit6+2.asc 1-6/7-12 rot2
+9 6 mit6+3.asc 1-6/7-12 rot2
+10 6 mit6+4.asc 1-6/7-12 rot2
+11 6 mit6+5.asc 1-6/7-12 rot2
+12 6 mit2x6.asc 1-6/13-18/7-12/19-24 basis-groot
+13 6 mit2x6+1.asc 1-6/13-18/7-12/19-24 rot2
+14 6 mit2x6+2.asc 1-6/13-18/7-12/19-24 rot2
+15 6 mit2x6+3.asc 1-6/13-18/7-12/19-24 rot2
+16 6 mit2x6+4.asc 1-6/13-18/7-12/19-24 rot2
+17 6 mit2x6+5.asc 1-6/13-18/7-12/19-24 rot2
+18 6 mit2x6+6.asc 1-6/13-18/7-12/19-24 rot2
+19 6 mit2x6+7.asc 1-6/13-18/7-12/19-24 rot2
+20 6 mit2x6+8.asc 1-6/13-18/7-12/19-24 rot2
+21 6 mit2x6+9.asc 1-6/13-18/7-12/19-24 rot2
+22 6 mit2x6+10.asc 1-6/13-18/7-12/19-24 rot2
+23 6 mit2x6+11.asc 1-6/13-18/7-12/19-24 rot2
+#
+# Schemaas 7 rondes
+#
+4 7 howell-4.gen 1-7
+5 7 rhwll-5-7.gen 1-7
+6 7 generate:expanded-mitchell:6:7 6-12
+7 7 generate:vasneg:7:7:X o1-14/e1-14 basis
+8 7 generate:vasneg:8:7:X o1-14/e1-14
+9 7 generate:vasneg:9:7:X o1-14/e1-14
+10 7 generate:vasneg:10:7:X o1-14/e1-14
+11 7 generate:vasneg:11:7:X o1-14/e1-14
+12 7 generate:vasneg:12:7:X o1-14/e1-14
+13 7 generate:vasneg:13:7:X o1-14/e1-14
+#
+# Schemaas 8 rondes
+#
+5 8 rhwll-5-8.gen 1-8
+6 8 rhwll-6-8.gen 1-8
+7 8 generate:expanded-mitchell:7:8 7-14
+8 8 schev16-8-X.asc o1-16/e1-16 basis
+9 8 schev18-8-X.asc o1-16/e1-16
+10 8 schev20-8-X.asc o1-16/e1-16
+11 8 schev22-8-X.asc o1-16/e1-16
+12 8 schev24-8-X.asc o1-16/e1-16
+13 8 schev26-8-X.asc o1-16/e1-16
+14 8 schev28-8-X.asc o1-16/e1-16
+15 8 schev30-8-X.asc o1-16/e1-16
+#
+# Schemaas 9 rondes
+#
+5 9 howell-5.gen 1-9
+6 9 rhwll-6-9.gen 1-9
+7 9 rhwll-7-9.gen 1-9
+8 9 generate:expanded-mitchell:8:9 8-16
+9 9 gen:mit:9 1-9/10-18 basis
+10 9 schev20-9-X.csv o1-18/e1-18
+11 9 mit9+2.asc 1-9/10-18 rot2
+12 9 mit9+3.asc 1-9/10-18 rot2
+13 9 mit9+4.asc 1-9/10-18 rot2
+14 9 mit9+5.asc 1-9/10-18 rot2
+15 9 mit9+6.asc 1-9/10-18 rot2
+16 9 mit9+7.asc 1-9/10-18 rot2
+17 9 mit9+8.asc 1-9/10-18 rot2
+#
+# Schemaas 10 rondes, vaak problematisch
+# rot2 betekent twee groepen tegelijk doordraaien
+#
+6 10 rhwll-6-10.gen 1-10
+7 10 rhwll-7-10.gen 1-10
+8 10 rhwll-8-10.gen 1-10
+9 10 generate:expanded-mitchell:9:10 9-18
+10 10 gen:mit:10 1-10/11-20 basis
+11 10 mit10+1.asc 1-10/11-20 rot2
+12 10 mit10+2.asc 1-10/11-20 rot2
+13 10 mit10+3.asc 1-10/11-20 rot2
+14 10 mit10+4.asc 1-10/11-20 rot2
+15 10 mit10+5.asc 1-10/11-20 rot2
+16 10 mit10+6.asc 1-10/11-20 rot2
+17 10 mit10+7.asc 1-10/11-20 rot2
+18 10 mit10+8.asc 1-10/11-20 rot2
+19 10 mit10+9.asc 1-10/11-20 rot2
+20 10 mit2x10.asc 1-10/21-30/11-20/31-40 basis-groot
+21 10 mit2x10+1.asc 1-10/21-30/11-20/31-40 rot2
+22 10 mit2x10+2.asc 1-10/21-30/11-20/31-40 rot2
+23 10 mit2x10+3.asc 1-10/21-30/11-20/31-40 rot2
+24 10 mit2x10+4.asc 1-10/21-30/11-20/31-40 rot2
+25 10 mit2x10+5.asc 1-10/21-30/11-20/31-40 rot2
+26 10 mit2x10+6.asc 1-10/21-30/11-20/31-40 rot2
+27 10 mit2x10+7.asc 1-10/21-30/11-20/31-40 rot2
+28 10 mit2x10+8.asc 1-10/21-30/11-20/31-40 rot2
+#
+# Schemaas 11 rondes
+#
+6 11 howell-6.gen 1-11
+7 11 rhwll-7-11.gen 1-11
+8 11 rhwll-8-11.gen 1-11
+9 11 rhwll-9-11.gen 1-11
+10 11 generate:expanded-mitchell:10:11 10-20
+11 11 generate:vasneg:11:11:X o1-22/e1-22 basis
+12 11 generate:vasneg:12:11:X o1-22/e1-22
+13 11 generate:vasneg:13:11:X o1-22/e1-22
+14 11 generate:vasneg:14:11:X o1-22/e1-22
+15 11 generate:vasneg:15:11:X o1-22/e1-22
+16 11 generate:vasneg:16:11:X o1-22/e1-22
+17 11 generate:vasneg:17:11:X o1-22/e1-22
+18 11 generate:vasneg:18:11:X o1-22/e1-22
+19 11 generate:vasneg:19:11:X o1-22/e1-22
+20 11 generate:vasneg:20:11:X o1-22/e1-22
+21 11 generate:vasneg:21:11:X o1-22/e1-22
+#
+# Schemaas 12 rondes
+#
+7 12 rhwll-7-12.gen 1-12
+8 12 rhwll-8-12.gen 1-12
+9 12 generate:expanded-mitchell:9:12 7-18
+10 12 generate:expanded-mitchell:10:12 9-20
+11 12 generate:expanded-mitchell:11:12 11-22
+12 12 generate:dw-mitchell:12 1-12/13-24 basis
+13 12 mit12+1.asc 1-12/13-24 rot2
+14 12 mit12+2.asc 1-12/13-24 rot2
+15 12 mit12+3.asc 1-12/13-24 rot2
+16 12 mit12+4.asc 1-12/13-24 rot2
+17 12 mit12+5.asc 1-12/13-24 rot2
+18 12 mit12+6.asc 1-12/13-24 rot2
+19 12 mit12+7.asc 1-12/13-24 rot2
+#
+# Schemaas 13 rondes
+#
+7 13 howell-7.gen 1-13
+8 13 rhwll-8-13.gen 1-13
+9 13 rhwll-9-13.gen 1-13
+10 13 rhwll-10-13.gen 1-13
+11 13 rhwll-11-13.gen 1-13
+12 13 generate:expanded-mitchell:12:13 12-24
+13 13 generate:vasneg:13:13:X o1-26/e1-26 basis
+14 13 generate:vasneg:14:13:X o1-26/e1-26
+15 13 generate:vasneg:15:13:X o1-26/e1-26
+16 13 generate:vasneg:16:13:X o1-26/e1-26
+17 13 generate:vasneg:17:13:X o1-26/e1-26
+18 13 generate:vasneg:18:13:X o1-26/e1-26
+19 13 generate:vasneg:19:13:X o1-26/e1-26
+20 13 generate:vasneg:20:13:X o1-26/e1-26
+21 13 generate:vasneg:21:13:X o1-26/e1-26
+22 13 generate:vasneg:22:13:X o1-26/e1-26
+23 13 generate:vasneg:23:13:X o1-26/e1-26
+24 13 generate:vasneg:24:13:X o1-26/e1-26
+25 13 generate:vasneg:25:13:X o1-26/e1-26

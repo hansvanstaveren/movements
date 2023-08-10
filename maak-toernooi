@@ -1,0 +1,300 @@
+#!/usr/bin/perl -w
+
+#
+# TODO:
+#
+
+$movements = "toernooi";
+$nosplit = 0;
+#
+# Reverse NS and EW group between alternate sections
+#
+$scramble_dir = 1;
+
+sub lees_schemaas {
+    my ($rounds) = @_;
+    my ($mintafels, $maxtafels) = (100000, 0);
+    my ($vlaggen, @vl);
+
+    open(SCH, "$movements-schemaas.txt") || die;
+    while (<SCH>) {
+	chomp;
+	s/#.*//;
+	next if (/^\s*$/);
+	my ($tafels, $sr, $naam, $groepen, $vlaggen) = split;
+	next if ($sr != $rounds);
+	$vlaggen = "" unless(defined($vlaggen));
+	# print "Schema $naam, $tafels tafels, vlaggen:$vlaggen, groepen:$groepen\n";
+	$mintafels = $tafels if ($tafels < $mintafels);
+	$maxtafels = $tafels if ($tafels > $maxtafels);
+	@vl = split(/,/, $vlaggen);
+	if (grep($_ eq "basis-groot", @vl)) {
+	    print "basis-groot schema $naam\n";
+	    $basisgroottafels = $tafels;
+	}
+	if (grep($_ eq "basis", @vl)) {
+	    print "basis schema $naam\n";
+	    $basistafels = $tafels;
+	}
+	if (grep($_ eq "complete", @vl)) {
+	    print "complete schema $naam\n";
+	    $compleet_schema = $naam;
+	    next;
+	}
+	die "$naam: Schema voor $tafels tafels is er al"
+	    if (defined($schema[$tafels]));
+	$schema[$tafels] = join(' ', $naam, $groepen, $vlaggen);
+    }
+    close SCH;
+    # print "Tafels tussen $mintafels en $maxtafels\n";
+    # print "Schemaas: @schema[$mintafels..$maxtafels]\n";
+    die "Geen basis schema" unless($basistafels);
+}
+
+sub execute {
+    my ($command) = @_;
+
+    print "Execute: $command\n";
+    $command = "perl " . $command if ($command =~ /^manipulate /);
+    $command = "PATH=.:\$PATH;$command";
+    system $command;
+}
+
+sub maak_fixers {
+    my ($t1,$r1,$t,$r) = @_;
+
+    # print "Fix: $t1, $r1, $t, $r\n";
+    $fixfile = "_mtrn_fix";
+    open FIX, ">$fixfile" || die;
+    for my $cr (1..$r) {
+	for my $ct (1..$t) {
+	    print FIX ($cr==1 || $cr<=$r1 && $ct<=$t1) ? "1 " : "0 ";
+	}
+	print FIX "\n";
+    }
+    close FIX;
+}
+
+$num_args = $#ARGV + 1;
+
+die "Usage: $0 toernooinaam aantal-paar aantal-sessies aantal-rondes [spelvast] [vastbegin:file]"
+	unless ($num_args >= 4);
+
+#
+# Read command line arguments
+#
+$name=shift(@ARGV);
+$pairs=shift(@ARGV);
+$sessions=shift(@ARGV);
+$rounds=shift(@ARGV);
+$spelvast = 0;
+$usp = 0;
+
+for (@ARGV) {
+    if (/^movements:(.*)$/) {
+	$movements = $1;
+	next;
+    }
+    if (/^nosplit/) {
+	$nosplit = 1;
+	next;
+    }
+    if (/^complete/) {
+	$complete = 1;
+	next;
+    }
+    if (/^spelvast$/) {
+    	$spelvast = 1;
+	next;
+    }
+    if (/^vastbegin:(.*)$/) {
+	$vastbegin = $1;
+	next;
+    }
+    if (/^usp$/) {
+    	$usp = 1;
+	next;
+    }
+    die "$_ onbekende optie";
+}
+
+lees_schemaas($rounds);
+
+if ($complete) {
+    if (($sessions+1)*$rounds != $pairs) {
+	die "Complete impossible with sessions $sessions and rounds $rounds";
+    }
+    unless (defined($compleet_schema)) {
+	die "No complete movement registered"
+    }
+}
+
+#
+# Ga groepgroottes maken
+#
+@groupsizes = ();
+$tablesleft = $pairs/2;
+
+#
+# Eerst basis-groot schemaas
+#
+if (defined($basisgroottafels) and !$complete) {
+    while ($tablesleft >= $basisgroottafels) {
+	$tablesleft -= $basisgroottafels;
+	push(@groupsizes, $basisgroottafels);
+    }
+}
+
+#
+# Daarna basis schemaas
+#
+while ($tablesleft >= $basistafels) {
+    $tablesleft -= $basistafels;
+    push(@groupsizes, $basistafels);
+}
+#
+# Restant tafels
+#
+if ($tablesleft) {
+    if (!defined($schema[$tablesleft])) {
+	#
+	# Er is geen schema voor dit aantal tafels
+	# Haal laatste groep weg, hopelijk lukt het dan
+	#
+	my $lastsize = pop(@groupsizes);
+	$tablesleft += $lastsize;
+	if (!defined($schema[$tablesleft]) && $lastsize > $basistafels) {
+	    #
+	    # Er is geen schema, maar misschien helpt het als we nog een
+	    # basis schema toevoegen
+	    #
+	    $tablesleft -= $basistafels;
+	    push(@groupsizes, $basistafels);
+	}
+	die "geen schema voor $tablesleft tafels" unless (defined($schema[$tablesleft]));
+    }
+    # print "Gebruik schema $schema[$tablesleft] aan het eind\n";
+    push(@groupsizes, $tablesleft);
+}
+print "Groupsizes: @groupsizes\n";
+
+$aantalgroepen = 0;
+$roteerstap = 1;
+$basisnummer = 0;
+@heengroepen = ();
+@teruggroepen = ();
+
+if (defined($vastbegin)) {
+    maak_fixers($groupsizes[0], $rounds, $pairs/2, $sessions*$rounds);
+}
+
+my @sl = ();
+$evenoddgroup = 1;
+for $gs (@groupsizes) {
+    $evenoddgroup = 1 - $evenoddgroup;
+    my ($naam, $groepen, $vlaggen) = split(' ', $schema[$gs]);
+    my @spelergroepen = split('/', $groepen);
+    push(@sl, $naam);
+    #$schemalijst .= " $naam";
+    $aantalgroepen += $#spelergroepen+1;
+    for my $sg (0..$#spelergroepen) {
+	my $groep = $spelergroepen[$sg];
+	my @gel = split(/(\d+)/, $groep);
+	for (@gel) {
+	    if (/^\d+$/) {
+		# print "Fix number from $_ ";
+		$_ += $basisnummer;
+		# print "to $_\n";
+	    }
+	}
+	$groep = join("", @gel);
+	print "Groep is nu $groep\n";
+	$heen = $sg < $#spelergroepen/2 ? 1 : 0;
+	if ($scramble_dir && $evenoddgroup) {
+	    $heen = 1-$heen;
+	    # print "heen en weer\n";
+	}
+	if ($heen) {
+	    push (@heengroepen, $groep);
+	} else {
+	    unshift(@teruggroepen, $groep);
+	}
+	# print "Voeg toe $heen <@heengroepen> <@teruggroepen>\n";
+    }
+    if ($vlaggen =~ /\brot2\b/) {
+	$roteerstap = $#spelergroepen+1 if ($roteerstap <= $#spelergroepen);
+    }
+    $basisnummer += 2*$gs;
+}
+
+$schemalijst = join(' ', @sl);
+@allegroepen = (@heengroepen, @teruggroepen);
+
+$maxsessies = $aantalgroepen/$roteerstap;
+$maxsessies-- if ($maxsessies%2 == 0);
+print "Schemalijst: $schemalijst, #groepen $aantalgroepen, maxsessies $maxsessies\n";
+print "alle groepen: @allegroepen\n";
+
+die "Te veel sessies" if ($sessions > $maxsessies);
+
+for $ses (1..$sessions) {
+    my (@rgroups);
+    my (@renprint);
+
+    #print "Start sessie $ses\n";
+    my $ses_sch = $schemalijst;
+    my $sestemp = "_mtrn_s$ses";
+    if ($ses == 1) {
+	if ($complete) {
+	    $ses_sch =~ s/[^ ]+/$compleet_schema/g;
+	} else {
+	    $ses_sch =~ s/\bX\b/1/g;
+	    if (defined($vastbegin)) {
+		if (! -r $vastbegin) {
+		    #
+		    # Maak vastbegin
+		    #
+		    my $beginschema = $ses_sch;
+		    $beginschema =~ s/ [^\s]*$//;
+		    execute("manipulate $beginschema draai: out:$sestemp");
+		    execute("balans -r 1 -m $vastbegin $sestemp >_mtrn_balansout");
+		}
+		$ses_sch =~ s/.* /$vastbegin /;
+	    }
+	}
+	$ren = "";
+    } else {
+	$ren = "renumber:contestant:" . join(',', @allegroepen) . ":";
+	my $aant_blokken = $aantalgroepen/$roteerstap;
+	$odd_section = $aant_blokken%2;
+	push(@rgroups, @allegroepen[0..$roteerstap-1]) unless ($odd_section);
+	for $g (1-$odd_section..$aant_blokken-1) {
+	    $ng = $g+$ses-1;
+	    $ng -= $aant_blokken-1+$odd_section if ($ng >= $aant_blokken);
+	    push(@renprint, "$g->$ng");
+	    push(@rgroups, @allegroepen[$ng*$roteerstap..($ng+1)*$roteerstap-1]);
+	}
+	print "Session $ses renumber: ", join(", ", @renprint), "\n";
+	$ren .= join(',', @rgroups);
+    }
+    #print "session $ses:$ses_sch $ren\n";
+    execute("manipulate $ses_sch $ren out:$sestemp");
+    if ($spelvast) {
+	my $newtemp = "_mtrn_sv$ses";
+	my $tbls = $pairs/2;
+	execute("manipulate $sestemp spelvast:$tbls out:$newtemp");
+	$sestemp = $newtemp;
+    }
+    $allses .= "$sestemp ";
+}
+
+{ use integer; $samples = 100000 / $pairs; }
+
+$renauto = $usp ? "renumber:cont:auto:auto " : "";
+
+$allsplit = join(',', ($rounds) x $sessions);
+execute("manipulate combine:vertical $allses out:_mtrn_tot");
+$fixarg = defined($fixfile) ? "-a $fixfile" : "-r 1";
+execute("balans $fixarg -s $samples -m _mtrn_totbal _mtrn_tot >_mtrn_balansout");
+$splitarg = $nosplit ? "" : "split:vertical:$allsplit";
+execute("manipulate $renauto$splitarg _mtrn_totbal out:$name.asc");

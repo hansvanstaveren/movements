@@ -1,0 +1,4296 @@
+#!/usr/bin/perl -w
+
+#
+# Auteur: Hans van Staveren <sater@xs4all.nl>
+#
+# Postel's law:
+# be conservative in what you send, liberal in what you accept
+#
+# TODO:
+# Maak semi-barometer van schema
+# Handle various IO types better
+#
+
+no warnings "experimental::smartmatch";
+use feature "switch";
+use File::Find;
+
+# Under control of User Interface?
+$uictl = 0;
+
+#
+# Support routines
+#
+
+sub must_be_number {
+    my ($arg) = @_;
+
+    return $arg if (defined($arg) && $arg =~ /\A\d+\z/);
+    die "$arg is geen getal";
+}
+
+sub message {
+    my ($level, $what, @rest) = @_;
+
+    print STDERR "$level $what ", @rest, "\n";
+}
+
+sub fatal_message {
+
+    message("Fatal", @_);
+    exit(1)
+}
+
+#
+# Debug level hash
+# Left column type of debug, right column level wanted
+# Debug level 0 is no debugging, 10 is everything
+#
+
+%debug_level = (
+    "args",		0,
+    "ascio",		0,
+    "autosplit",	0,
+    "balans",		1,	# Qf on stderr if >= 1
+    "combinatorial",	0,
+    "draai",		0,
+    "extratafel",	1,	# Extra sharing on stderr if >= 1
+    "filenames",	0,
+    "findfile",		0,
+    "generate",		0,
+    "interactive",	10,
+    "meeting",		0,
+    "mvt",		0,
+    "pairsio",		0,
+    "recept",		0,
+    "renumber",		0,
+    "schema",		0,
+    "spelervast",	0,
+    "spelvast",		0,
+    "split",		0,
+    "stanza",		2,
+);
+
+sub debug {
+    my($category, $level, @rest) = @_;
+
+    #
+    # Check if debug exceeds level
+    # unknown category means max level
+    #
+    my $limlevel = $debug_level{$category};
+
+    #
+    # So print if limit undefined, or level under limit
+    #
+    message("Debug", $category, @rest)
+	if (!defined($limlevel) || $level < $limlevel);
+    #print STDERR @rest, "\n"
+}
+
+sub debugstat {
+    my($category, $level, @rest) = @_;
+
+    $statlim{$category} = 1 unless defined($statlim{$category});
+    $statcnt{$category} = 0 unless defined($statcnt{$category});
+    $statcnt{$category}++;
+    if ($statcnt{$category} >= $statlim{$category}) {
+	debug($category, $level, "Teller($statcnt{$category}): ", @rest);
+	$statlim{$category} *= 2;
+    }
+}
+
+sub set_debug_level {
+    my ($category, $level) = @_;
+
+    $debug_level{$category} = $level;
+}
+
+#
+# File types hash
+# Treat left column like right column
+#
+%input_file_types = (
+    "gen",	"gen",
+    "mvt",	"mvt",
+    "lcd",	"lcd",
+    "asc",	"asc",
+    "csv",	"asc",
+    "txt",	"asc"
+);
+
+%io_file_suffices = (
+    "gen",	"mafa",
+    "mvt",	"jeanie",
+    "lcd",	"dbf",
+    "asc",	"asc",
+    "csv",	"csv",
+);
+
+%io_file_types = (
+    "asc",		"io",
+    "csv",		"io",
+    "jeanie",		"i",
+    "dbf",		"io",
+    "mafa",		"i",
+    "numberlines",	"o",
+    "tabel",		"o",
+);
+
+sub file_suffix {
+    my ($file) = @_;
+
+    if ($file =~ /\.(...)$/ ) {
+	return $1;
+    }
+    return undef;
+}
+
+sub read_data_line {
+    my ($fh) = @_;
+
+    while(<$fh>) {
+	chomp;
+	#
+	# Handle Draai arguments
+	#
+	if ($auto_draai && /^\s*#\s*(Draai:[^\s]*)/ ) {
+	    handle_arg(split /:/, $1);
+	    next;
+	}
+	#
+	# Skip other comments
+	#
+	s/#.*//;		# Comment
+	
+	#
+	# Skip (now) empty lines
+	#
+	next if ( /^\s*$/ );	# Empty line
+
+	#
+	# Return a line
+	#
+    	return $_;
+    }
+    return undef;
+}
+
+#
+# Rotate variable by value, keeping within min and max
+#
+sub rotate {
+	my ($var, $inc, $min, $max) = @_;
+
+	my $rng = $max - $min + 1;
+	my $t = $var+$inc;
+
+	return $t - $rng if ($t > $max);
+	return $t + $rng if ($t < $min);
+	return $t;
+}
+
+#
+# Combinatorial, used in making movements
+#
+
+sub combinatorial_recur {
+    my ($n, $k) = @_;
+
+    debugstat("combinatorial", 8, "comb($n, $k)");
+    my $nmin1 = $n - 1;
+    return "" if ($k == 0);
+    return (join(":", 0..$nmin1)) if ($k == $n);
+    die "wrong combinatorial" if ($k > $n);
+
+    my @res = combinatorial_recur($n-1, $k);
+    if ($k > 0) {
+	for my $r (combinatorial_recur($n-1, $k-1)) {
+	    $r = join(":", split(/:/, $r), $nmin1);
+	    push(@res, $r);
+	}
+	debugstat("combinatorial", 8, "comb($n, $k), res=@res");
+    }
+    return (@res);
+}
+
+sub combinatorial {
+    my ($n, $k) = @_;
+    my $key = "$n:$k";
+
+    #
+    # Cache results in hash
+    #
+    my $val = $comb_cache{$key};
+    unless (defined($val)) {
+	my @res = combinatorial_recur($n, $k);
+	$val = join(" ", @res);
+	$comb_cache{$key} = $val;
+	debug("combinatorial", 1, "c($n, $k) = '@res'");
+    }
+    return (split(" ", $val));
+}
+
+#
+# Timing function(s)
+#
+
+sub cputime {
+
+    my ($u, $s, $cu, $cs) = times;
+    return $u;
+}
+
+sub log_time {
+    my ($cat, $mes) = @_;
+
+    my $ct = cputime();
+    debug($cat, 2, "$mes, time = $ct");
+    if ($ct > $xs_maxtime) {
+	die "CPU time exceeded";
+    }
+}
+
+sub two_digits {
+    my ($val) = @_;
+
+    return sprintf("%.2f", $val);
+}
+
+$ac_prev = 0;
+sub account_time {
+    my ($cat) = @_;
+
+    my $t = cputime();
+    $account_time{$cat} += $t -$ac_prev;
+    $account_n{$cat}++;
+    $ac_prev = $t;
+}
+
+sub report_accounting {
+
+    for my $c (sort { $a cmp $b } keys(%account_n)) {
+	my $c_n = $account_n{$c};
+	my $c_t = $account_time{$c};
+	my $tot = two_digits($c_t);
+	my $av = two_digits(1000000*$c_t/$c_n);
+	debug("accounting", 0, "$c: $c_n keer, tot $tot sec, gem $av usec");
+    }
+}
+
+#
+# Various stuff differing between pairs and individual
+#
+
+$type_UPI = "U";	# Unknown, Pairs, Individual
+$ncontpertable = 0;	# 2 for pairs, 4 for individual
+
+sub set_contest_type {
+    my ($t) = @_;
+
+    given ("$type_UPI$t") {
+	return when("II");
+	return when("PP");
+	when ("UI") {
+	    $type_UPI = "I";
+	    $ncontpertable = 4;
+	    @draaiindx = (2,3, 0,1, 4);
+	    $emptydata = "0:0:0:0:0";
+	    $max_meetings=2 unless (defined($max_meetings));
+	}
+	when ("UP") {
+	    $type_UPI = "P";
+	    $ncontpertable = 2;
+	    @draaiindx = (1, 0, 2);
+	    $emptydata = "0:0:0";
+	    $max_meetings=1 unless (defined($max_meetings));
+	}
+	default {
+	    die "pairs/individual mixup";
+	}
+    }
+    $ncontperside = $ncontpertable/2;
+    @contindx = (0..$ncontpertable-1);
+}
+
+#
+# Various stuff for entering and combining movements
+#
+
+sub schema_start {
+    $combine_type = "horizontal";
+
+    $total_tables = 0;
+    $total_conts = 0;
+    $total_rounds = 0;
+    $total_brdsets = 0;
+
+    $curtail_rounds = 0;
+    $leegweg = 0;
+    $krimp_tafels = 0;
+
+    $renumber_ops = 0;
+    $renumber_last_renumber = 0;
+
+    $make_barometer = 0;
+    $run_balans = 0;
+    $extratafel_aantal = 0;
+
+    undef %data_in;
+}
+
+sub enter_opp {
+    my ($p1, $p2) = @_;
+
+    ($p1, $p2) = ($p2, $p1) if ($p2<$p1);
+    $how_often_opps{"$p1:$p2"}++;
+    debug("meeting", 8, "enter_opp: $p1 $p2");
+}
+
+sub enter_pd {
+    my ($p1, $p2) = @_;
+
+    ($p1, $p2) = ($p2, $p1) if ($p2<$p1);
+    $are_pds{"$p1:$p2"}++;
+    debug("meeting", 8, "enter_pd: $p1 $p2");
+}
+
+#
+# Offsets for entering this submeeting, set in deelschema_klaar
+# Computed parameters of this submeeting, verified in deelschema_klaar
+#
+
+$round_off = 0;
+$table_off = 0;
+$cont_off = 0;
+$brd_off = 0;
+
+$part_tables = 0;
+$part_conts = 0;
+$part_rounds = 0;
+$part_brdsets = 0;
+
+sub enter_meeting {
+    my ($round, $table, $brdset, @tlist) = @_;
+    my ($roundstr, $groupstr);
+    my ($datastr);
+
+    debug("meeting", 1, "enter_meeting: $round $table (@tlist) $brdset");
+
+    $part_tables = $table if ($table > $part_tables);
+    $part_rounds = $round if ($round > $part_rounds);
+
+    # Empty meeting if brdset or any contestant == 0
+    return if ($brdset == 0);
+
+    #
+    # Make barometer if asked, just set boardgroup to round
+    #
+    $brdset = $round if ($make_barometer);
+
+    $part_brdsets = $brdset if ($brdset > $part_brdsets);
+
+    $round += $round_off;
+    $table += $table_off;
+    $brdset += $brd_off;
+
+    $roundstr = " $round ";
+    $groupstr = " $brdset ";
+    for my $contnr (@contindx) {
+
+	# Empty meeting if brdset or any contestant == 0
+    	return if ($tlist[$contnr] == 0);
+
+	$part_conts = $tlist[$contnr] if ($tlist[$contnr] > $part_conts);
+
+	# Add offset to contestant number for combining
+	$tlist[$contnr] += $cont_off;
+
+	$cont = $tlist[$contnr];
+
+	# Check for contestant only once in each round
+	if (defined($c_rnd{$cont}) && $c_rnd{$cont} =~ /$roundstr/) {
+	    die "deelnemer $cont speelde al in ronde $round: $c_rnd{$cont}";
+	}
+	$c_rnd{$cont} .= $roundstr;
+	debug("meeting", 2, "contestant $cont played in rounds $c_rnd{$cont}");
+
+	# Check for each boardset at most once per contestant
+	if (defined($c_brd{$cont}) && $c_brd{$cont} =~ /$groupstr/) {
+	    die "deelnemer $cont speelde spelset $brdset al eerder: $c_brd{$cont}";
+	}
+	$c_brd{$cont} .= $groupstr;
+	debug("meeting", 2, "contestant $cont played boards $c_brd{$cont}");
+    }
+
+    #
+    # Make opponent matrix
+    #
+    for my $c1 (0..$ncontperside-1) {
+	for my $c2 ($ncontperside..2*$ncontperside-1) {
+	    enter_opp($tlist[$c1], $tlist[$c2]);
+	}
+    }
+
+    #
+    # In individual make partner matrix
+    #
+    if ($ncontpertable == 4 ) {
+    	enter_pd($tlist[0], $tlist[1]);
+    	enter_pd($tlist[2], $tlist[3]);
+    }
+
+    #
+    # Enter meeting in the %data_in hash
+    #
+    $datastr = join(':', @tlist, $brdset);
+    debug("meeting", 2, "round $round, table $table, data $datastr");
+    $data_in{"$round:$table"} = $datastr;
+}
+
+sub deelschema_klaar {
+    my ($tables, $contestants, $nrounds, $nbrdsets) = @_;
+
+    debug("schema",0, "deelschema klaar, $tables tafels, $contestants deelnemers, $nrounds ronden, $nbrdsets spelgroepen");
+
+    $nbrdsets = $nrounds if ($make_barometer);
+
+    #
+    # Check parameters with computed parameters
+    #
+    warn "#round mismatch" unless ($nrounds == $part_rounds);
+    warn "#brdset mismatch" unless ($nbrdsets == $part_brdsets);
+    if ($nrounds != 0) {
+	warn "#table mismatch" unless ($tables == $part_tables);
+	warn "#cont mismatch" unless ($contestants == $part_conts);
+    }
+
+    $part_tables = 0;
+    $part_conts = 0;
+    $part_rounds = 0;
+    $part_brdsets = 0;
+    if ($combine_type eq "horizontal") {
+	#
+	# Horizontaal combineren
+	# Check op aantal ronden gelijk.
+	# Wellicht niet nodig, misschien maximum aanhouden
+	#
+
+	if ($total_rounds == 0) {
+	    # Eerste schema zet ronden
+	    $total_rounds = $nrounds;
+	} elsif ($total_rounds != $nrounds) {
+	    die "Aantal ronden klopt niet";
+	}
+
+	$total_tables += $tables;
+	$total_conts += $contestants;
+
+	#
+	# Sommige schemaas(niet in NL) hebben niet hetzelfde aantal
+	# spelsets in alle groepen. Denk aan Mitchells in Frankrijk.
+	# Dan moet hier het maximum van de spelgroepen worden bepaald
+	#
+	if ($total_brdsets == 0) {
+	    # Eerste schema zet spelgroepen
+	    $total_brdsets = $nbrdsets;
+	} elsif ($total_brdsets != $nbrdsets) {
+	    warn "Aantal spelgroepen klopt niet";
+	    $total_brdsets = $nbrdsets if ($nbrdsets > $total_brdsets);
+	}
+
+	$table_off = $total_tables;
+	$cont_off = $total_conts;
+    } else {
+	#
+	# Verticaal combineren
+	#
+
+	$total_rounds += $nrounds;
+
+	#
+	# Check op aantal tafels en deelnemers
+	# Zelfde verhaal, wellicht hoeft het niet gelijk en moet
+	# het maximum tellen
+	#
+	if ($total_tables == 0) {
+	    # Eerste schema zet tafels
+	    $total_tables = $tables;
+	} elsif ($total_tables != $tables) {
+	    die "Aantal tafels klopt niet";
+	}
+
+	if ($total_conts == 0) {
+	    # Eerste schema zet spelgroepen
+	    $total_conts = $contestants;
+	} elsif ($total_conts != $contestants) {
+	    die "Aantal deelnemers klopt niet";
+	}
+
+	$total_brdsets += $nbrdsets;
+
+    	$round_off = $total_rounds;
+	$brd_off = $total_brdsets;
+    }
+
+    debug("schema", 0, "Nu totaal: $total_rounds ronden, $total_tables tafels, $total_conts deelnemers, $total_brdsets spelgroepen");
+}
+
+sub switch_to_vertical {
+
+    #
+    # Start combining vertically
+    # used by the stanza function
+    #
+    $combine_type = "vertical";
+    $round_off = $total_rounds;
+    $brd_off = $total_brdsets;
+    $table_off = 0;
+    $cont_off = 0;
+}
+
+#
+# Maken van matrix file
+#
+
+sub print_triangle {
+    my ($mat) = @_;
+
+    print MATRIX "     ";
+    for my $c1 (1..$total_conts) {
+    	printf MATRIX "%3d", $c1;
+    }
+    print MATRIX "\n\n";
+
+    for my $c1 (1..$total_conts) {
+	printf MATRIX "%3d  ", $c1;
+	for my $c2 (1..$c1-1) {
+	    my $v = $$mat{"$c2:$c1"};
+	    $v = 0 unless(defined($v));
+	    printf MATRIX "%3d", $v;
+	}
+	print MATRIX "  -\n";
+    }
+}
+
+sub print_matrices {
+
+    open MATRIX, "> $matrixfile" || die $!;
+    print MATRIX "Opponent matrix\n\n";
+    print_triangle(\%how_often_opps);
+    if ($ncontpertable == 4) {
+	print MATRIX "\n\nPartner matrix\n\n";
+	print_triangle(\%are_pds)
+    }
+    close MATRIX;
+}
+
+#
+# Alle schemaas ingelezen, controle op aantal meetings
+#
+
+sub schema_klaar {
+    my ($cnt);
+
+    die "leeg schema!" if ($total_conts == 0);
+
+    $cnt = 0;
+    $min_meetings=0 unless (defined($min_meetings));
+    for my $p1 (1..$total_conts-1) {
+	for my $p2 ($p1+1..$total_conts) {
+	    my $v = $how_often_opps{"$p1:$p2"};
+	    $v = 0 unless (defined($v));
+	    if ($v < $min_meetings || $v > $max_meetings) {
+		$cnt++;
+		next if ($cnt>5);
+		warn ("contestants $p1 and $p2 met $v times");
+	    }
+	}
+    }
+    warn "..." if ($cnt > 5);
+    warn "Total $cnt wrong count meetings" if ($cnt>0);
+
+    print_matrices() unless ($matrixfile eq "");
+}
+
+#
+# Maak extra tafel, met stayer en rover
+#
+# Complicatie: dit doe je vaak in een schema wat weer moet worden samengesteld
+# dan moet je ook eisen stellen aan de paren waar de rover tegen mag
+# Over nadenken!! Nu zo dat rover alleen originele paren mag wegsturen
+# Wellicht twee argumenten, de lijst van paren waar de stayer tegen mag,
+# en de lijst paren die ueberhaupt mogen meedoen
+#
+# Meerdere extra tafels worden 1 voor 1 toegevoegd.
+# Potentieel probleem: een foute keuze bij de eerste kan een latere in de weg
+# zitten. Eventueel TODO.
+#
+# Code zoekt nu de mogelijkheid met minste triple-sharing
+# Maakt oude 'l' vlag overbodig
+#
+
+sub recur_et {
+    my ($round, $trounds, $totalpenalty) = @_;
+    my (@vals);
+    my (@cand);
+    my ($off);
+
+    if ($totalpenalty >= $xt_bestscore) {
+	#
+	# This attempt will not be better, forget it
+	#
+	debug("extratafel", 5, "return, $totalpenalty not better than $xt_bestscore");
+	return;
+    }
+    if ($round > $trounds) {
+	#
+    	# End of recursion, we made it and better than best so far
+	#
+	$xt_bestscore = $totalpenalty;
+	@xt_best = @extratafel_choices;
+	debug("extratafel", 2, "Best now $xt_bestscore: @xt_best");
+	return;
+    }
+
+    @cand = split /:/, $extratafel_candidates[$round];
+    debug("extratafel", 8, "Round $round, tp=$totalpenalty, cand @cand");
+
+    for ($off = 0; $off < $#cand; $off += 3) {
+	my ($t, $c, $penalty) = @cand[$off..$off+2];
+	debug("extratafel", 9, "Round $round, off $off, t=$t, c=$c, penalty=$penalty");
+	@vals = split /:/, $data_in{"$round:$t"};
+
+	#
+	# Forget this candidate if previous rounds made it impossible
+	#
+
+	next if ($hist_boardplayed[$vals[2]]);
+	next if ($c < 2 && $hist_opp_stayer[$vals[$c]]);
+	next if ($c < 2 && $hist_opp_rover[$vals[1-$c]]);
+
+	#
+	# This candidate is still possible, mark everything for this round
+	# and try for next round
+	#
+
+	debug("extratafel", 9, "Serious candidate");
+
+	$extratafel_choices[$round] = join(":", $t, $c);
+	$hist_boardplayed[$vals[2]] = 1;
+	$hist_opp_stayer[$vals[$c]] = 1 if($c < 2);
+	$hist_opp_rover[$vals[1-$c]] = 1 if($c < 2);
+
+	recur_et($round+1, $trounds, $totalpenalty+$penalty);
+
+	$hist_boardplayed[$vals[2]] = 0;
+	$hist_opp_stayer[$vals[$c]] = 0 if($c < 2);
+	$hist_opp_rover[$vals[1-$c]] = 0 if($c < 2);
+    }
+}
+
+sub do_extratafel {
+    my ($pairlist, $norig_pairs, $flag) = @_;
+    my (@pairar, @pairallowed);
+
+    # No restrictions, all pairs allowed if list empty
+    $pairlist = "1-$norig_pairs" if ($pairlist eq "");
+    debug("extratafel", 1, "Pairlist: $pairlist");
+    debug("extratafel", 1, "$norig_pairs basis-schema, vlag=$flag");
+
+    my $one_of_X = $flag =~ /1/;
+
+    #
+    # This is pairs only
+    #
+    set_contest_type("P");
+
+    # No half full tables allowed
+    die "Stilzitters in schema, geen extra tafel"
+	unless ($total_tables*2 == $total_conts);
+
+    @pairar = make_list($pairlist, 1, $norig_pairs);
+    @pairallowed = (0) x ($total_conts+1);
+    $pairallowed[$_] = 1 for (@pairar);
+    debug("extratafel", 1, "pairallowed: @pairallowed");
+
+    #
+    # Find out the least used boards of each round
+    # But not the boards used 0 times of course!
+    #
+    for my $r (1..$total_rounds) {
+	my(@candidate_places);
+
+    	my (@bc) = (0) x ($total_brdsets+1);
+	for my $t (1..$total_tables) {
+	    my @vals = split /:/, $data_in{"$r:$t"};
+	    $bc[$vals[2]]++;
+	}
+	my $minused = 1000000;
+	for my $b (1..$total_brdsets) {
+	    if ($bc[$b] > 0 && $bc[$b] < $minused) {
+		$minused = $bc[$b];
+	    }
+	}
+	debug("extratafel", 7, "Ronde $r, board count @bc, min is $minused");
+
+	#
+	# Now, for this round, find all possible places to place the rover
+	# The board at the table must be one of the minimum played, and the pair
+	# must be on the allowed list
+	#
+
+	for my $t (1..$total_tables) {
+	    my @vals = split /:/, $data_in{"$r:$t"};
+	    if ($one_of_X && $r==1) {
+		# First round special
+		unshift(@candidate_places, $t, 2, 0);
+		next;
+	    }
+	    for my $c (0..1) {
+		# Pair at place $c must be in allowed list, other pair
+		# must be an original pair, not a result of an other extra table
+		if ($pairallowed[$vals[$c]] && $vals[1-$c] <= $norig_pairs) {
+		    if ($bc[$vals[2]] > $minused) {
+			# At end of list, needs triple sharing
+			push(@candidate_places, $t, $c, 1);
+		    } else {
+			unshift(@candidate_places, $t, $c, 0);
+		    }
+		}
+	    }
+	}
+
+	debug("extratafel", 7, "Candidates: @candidate_places");
+	$extratafel_candidates[$r] = join(":", @candidate_places);
+    }
+
+    @hist_boardplayed = (0) x ($total_brdsets+1);
+    @hist_opp_rover = (0) x ($total_conts+1);
+    @hist_opp_stayer = (0) x ($total_conts+1);
+
+
+    #
+    # Try to do it recursively
+    # We call recur_et for round 1, which will call etc etc..
+    # If this returns 1 it worked
+    #
+
+    $xt_bestscore = $total_rounds+1;
+    $extratafel_choices[0] = "";	# No undefs
+
+    recur_et(1, $total_rounds, 0);
+    die "extratafel mislukt" unless ($xt_bestscore <= $total_rounds);
+    debug("extratafel", 0, "Extra sharing in $xt_bestscore rounds") if ($xt_bestscore);
+
+    #
+    # It worked. Now go and split each of the selected tables into two
+    # The stayer(even pairnumber) sits at the new table
+    # The rover replaces the selected pair from the existing table
+    #
+
+    debug("extratafel", 1, "bestscore $xt_bestscore, choices: @xt_best");
+
+    # Stayer table is table after last
+    my $st = $total_tables+1;
+
+    for my $r (1..$total_rounds) {
+	my (@tbl_rover, @tbl_stayer);
+
+	my ($t, $c) = split /:/, $xt_best[$r];
+	@tbl_rover = split /:/, $data_in{"$r:$t"};
+
+	# Boards played at both tables the same
+	$tbl_stayer[2] = $tbl_rover[2];
+
+	# Special for first round?
+	if ($c == 2) {
+	    $data_in{"$r:$st"} = join(":", $total_conts+1, $total_conts+2, $tbl_stayer[2]);
+	    next;
+	}
+
+	# Pair removed from it's table plays in same direction at Stayer table
+	$tbl_stayer[$c] = $tbl_rover[$c];
+
+	# Other pair playing there is Stayer
+	$tbl_stayer[1-$c] = $total_conts+2;
+
+	# Removed pair at Rover table replaced by rover
+	$tbl_rover[$c] = $total_conts+1;
+
+	debug("extratafel", 3, "tbl_stayer: @tbl_stayer, tbl_rover: @tbl_rover");
+	# Put both tables into hash
+	$data_in{"$r:$t"} = join(":", @tbl_rover);
+	$data_in{"$r:$st"} = join(":", @tbl_stayer);
+
+    }
+    $total_conts += 2;
+    $total_tables += 1;
+}
+
+#
+# Making translation tables
+#
+
+sub check_val {
+    my ($val, $min, $max) = @_;
+
+    die "Value $val not between $min and $max" if ($val<$min || $val>$max);
+    return $val;
+}
+
+sub make_list {
+    my($list, $min, $max) = @_;
+    my(@ar);
+
+    debug("renumber", 3, "make_list $list $min $max");
+    $list = uc $list;
+    for my $range (split /,/, $list) {
+	# Odd and even are synonyms for the (more general) 2D1R and 2D0R
+	$range =~ s/^O/2D1R/;
+	$range =~ s/^E/2D0R/;
+	if ($range =~ /((\d+)D(\d+)R)?(\d+)-(\d+)/) {
+	    my ($divider, $remainder, $lwb, $upb);
+	    if (!defined($1)) {
+		# No divider/remainder, so whole list
+		$divider = 1;
+		$remainder = 0;
+	    } else {
+		$divider = $2;
+		$remainder = $3;
+	    }
+	    $lwb = $4;
+	    $upb = $5;
+	    for my $num ( $lwb < $upb ? ($lwb..$upb) : reverse ($upb..$lwb) ) {
+		push(@ar, check_val($num, $min, $max))
+		    if ($num%$divider==$remainder);
+	    }
+	} else {
+	    push(@ar, check_val(must_be_number($range), $min, $max));
+	}
+    }
+    return (@ar);
+}
+
+sub make_translation_table {
+    my($nfrom, $fromstring, $tostring) = @_;
+    my (@table, @sortedtable);
+    my (@from_ar, @to_ar);
+
+    debug("renumber", 2, "Translate $nfrom ($fromstring) to ($tostring)");
+
+    @table = ( 0..$nfrom) ;
+    @from_ar = make_list($fromstring, 1, $nfrom);
+    @to_ar = make_list($tostring, 1, $nfrom);
+    die "Lijsten $fromstring en $tostring zijn niet even lang"
+	unless ($#from_ar == $#to_ar);
+    @table[@from_ar] = @to_ar;
+
+    debug("renumber", 2, "From: @from_ar to @to_ar");
+    debug("renumber", 3, "unsorted table @table");
+
+    #
+    # Standard renumbering
+    # All to all, so no doubles
+    #
+    @sortedtable = sort { $a <=> $b } @table;
+
+    debug("renumber", 3, "  sorted table @sortedtable");
+
+    for (0..$#sortedtable) {
+	die "Translation table @table defective"
+	    unless ($sortedtable[$_] == $_)
+    }
+    return @table;
+}
+
+sub do_renumber {
+    my ($fromhash, $tohash, $rfc, $rtc, $rfb, $rtb, $rfr, $rtr, $rft, $rtt) = @_;
+    my ($k, $v, $nk, $nv, $round, $table);
+    my (@cont);
+
+    debug("renumber", 1, "Renumber:$rfc, $rtc, $rfb, $rtb, $rfr, $rtr, $rft, $rtt");
+
+    my @rtab_c = make_translation_table($total_conts, $rfc, $rtc);
+    debug("renumber", 2, "conts_table = @rtab_c");
+    my @rtab_b = make_translation_table($total_brdsets, $rfb, $rtb);
+    debug("renumber", 2, "boards_table = @rtab_b");
+    my @rtab_r = make_translation_table($total_rounds, $rfr, $rtr);
+    debug("renumber", 2, "rounds_table = @rtab_r");
+    my @rtab_t = make_translation_table($total_tables, $rft, $rtt);
+    debug("renumber", 2, "tables_table = @rtab_t");
+
+    while (($k, $v) = each(%$fromhash)) {
+	($round, $table) = split /:/, $k;
+
+	@cont = split /:/, $v;
+
+	# Renumber round and table
+	$round = $rtab_r[$round];
+	$table = $rtab_t[$table];
+
+	# Renumber contestants and board
+	$cont[$_] = $rtab_c[$cont[$_]] for (@contindx);
+	$cont[$ncontpertable] = $rtab_b[$cont[$ncontpertable]];
+
+	$nk = join(':', $round, $table);
+	$nv = join(':', @cont);
+	$$tohash{$nk} = $nv;
+	debug("renumber", 4, "$k $v   -> $nk $nv");
+    }
+}
+
+#
+# Spelervast: hernummer tafels per ronde zodat een speler of spelers
+# vastzitten op 1 tafel
+#
+
+sub do_spelervast {
+    my ($fromhash, $tohash, $sv_cont_l, $sv_table_l) = @_;
+
+    my @sv_cont_a = make_list($sv_cont_l, 1, $total_conts);
+    my @sv_table_a = make_list($sv_table_l, 1, 2*$total_tables);
+    my $maxtrlat = $#sv_cont_a;
+    die "Spelervast: lijsten niet even lang" if ($maxtrlat != $#sv_table_a);
+
+    for my $rnd (1..$total_rounds) {
+	my $oldtables = $total_tables;
+	my @trlat = (0) x (2*$oldtables+1);
+	my @taken = (0) x ($oldtables+1);
+
+	for $idx (0..$maxtrlat) {
+	    my ($sv_cont, $sv_table) = ($sv_cont_a[$idx], $sv_table_a[$idx]);
+	    my $fnd_table = 0;
+	    for my $tbl (1..$total_tables) {
+		my $h = $$fromhash{"$rnd:$tbl"};
+		next unless (defined($h));
+		my @v = split /:/, $h;
+		if (grep /^$sv_cont$/, @v[@contindx]) {
+		    debug("spelervast", 3, "Found cont $sv_cont, round $rnd, table $tbl");
+		    $fnd_table = $tbl;
+		    last;
+		}
+	    }
+	    if ($fnd_table != 0 && $taken[$fnd_table]==0) {
+		debug("spelervast",4, "Move table $fnd_table to $sv_table");
+		$trlat[$sv_table] = $fnd_table;
+		$taken[$fnd_table] = 1;
+	    }
+	    $total_tables = $sv_table if ($sv_table > $total_tables);
+	}
+	debug("spelervast", 2, "Round $rnd stage 1, spelervast translate @trlat, taken @taken");
+
+	for my $tbl (1..$oldtables) {
+	    # Can tables stays in place?
+	    if ($trlat[$tbl] == 0 && $taken[$tbl] == 0) {
+		$trlat[$tbl] = $tbl;
+		$taken[$tbl] = 1;
+	    }
+	}
+	debug("spelervast", 2, "Round $rnd stage 2, spelervast translate @trlat, taken @taken");
+
+	for my $tbl (1..$oldtables) {
+	    next if($taken[$tbl]);
+	    # Table must move somewhere
+	    for my $ntbl (1..$total_tables) {
+		next if ($trlat[$ntbl]);
+		$trlat[$ntbl] = $tbl;
+		last;
+	    }
+	}
+	debug("spelervast", 2, "Round $rnd stage 3, spelervast translate @trlat, taken @taken");
+
+	#
+	# Now do the actual translate
+	#
+	for my $tbl (1..$total_tables) {
+	    $$tohash{"$rnd:$tbl"} = $$fromhash{"$rnd:$trlat[$tbl]"};
+	}
+    }
+}
+
+#
+# Spelvast: hernummer tafels per ronde zodat spellen blijven liggen
+#
+
+sub do_spelvast {
+    my ($fromhash, $tohash, $tbls, $rnds) = @_;
+    my ($highestboard, $highestcount, $changes);
+
+    my $default = 0;
+    ($tbls, $default) = ($total_tables, 1) if (!defined($tbls) || $tbls eq "");
+    my $save_tbls = $tbls;
+    $rnds = $total_rounds if (!defined($rnds));
+    debug("spelvast", 0, "Tables $tbls, Rounds: $rnds, Default: $default");
+
+    die "Spelvast op $tbls tafels, er zijn er slechts $total_tables"
+    	if ($tbls > $total_tables);
+    die "Spelvast in $rnds rondes, er zijn er slechts $total_rounds"
+    	if ($rnds > $total_rounds);
+    do {
+	$changes = 0;
+	$highestcount = 0;
+	for my $r (1..$rnds) {
+	    my (@brdcnt) = (0) x ($total_brdsets+1);;
+	    for my $t (1..$tbls) {
+		my $h = $$fromhash{"$r:$t"};
+		next unless (defined($h));
+		my @v = split /:/, $h;
+		my $b = $v[$ncontpertable];
+		if ($default && $brdcnt[$b]) {
+		    warn "Round $r, table $t, board $b already played at lower table";
+		    $tbls = $t-1;
+		    $changes = 1;
+		    last;
+		}
+		$brdcnt[$b]++;
+		if ($brdcnt[$b] > $highestcount) {
+		    $highestcount = $brdcnt[$b];
+		    $highestboard = $b;
+		} else {
+		    $highestboard = $b if ($b > $highestboard);
+		}
+	    }
+	}
+    } while ($changes);
+
+    warn("Spelvast slechts op de eerste $tbls tafels")
+	unless ($tbls == $save_tbls);
+
+    debug("spelvast", 1, "Highboard $highestboard, highcount $highestcount");
+
+    my $t_inc = ($highestcount-1)*$total_brdsets + $highestboard - $tbls;
+    $total_tables += $t_inc;
+    for my $round (1..$total_rounds) {
+	for my $table (1..$total_tables) {
+	    my $h = $$fromhash{"$round:$table"};
+	    next unless (defined($h));
+
+	    @cont = split(/:/, $h);
+	    if ($round <= $rnds) {
+		$brdgroup = $cont[$ncontpertable];
+
+		if ($table > $tbls) {
+		    $table += $t_inc;	# Make room
+		} else {
+		    $table = $brdgroup;
+		    $table += $total_brdsets while (defined($$tohash{"$round:$table"}));
+		}
+	    }
+
+	    $$tohash{"$round:$table"} = join(':', @cont);
+	}
+    }
+}
+
+#
+# Splitting
+#
+
+$split_h = "";
+$split_v = "";
+
+sub check_split {
+    my ($list, $total) = @_;
+
+    my $sum = 0;
+    $sum += must_be_number($_) for ( split /,/, $list );
+    die "$list does not add up to $total" unless ($sum == $total);
+}
+
+sub inspect_part {
+    my ($hash, $lr, $hr, $lt, $ht, $cont_hash, $brd_hash) = @_;
+
+    for my $r ($lr..$hr) {
+	for my $t ($lt..$ht) {
+	    my $h = $$hash{"$r:$t"};
+	    next unless (defined($h));
+	    my @v = split /:/, $h;
+	    $$cont_hash{$v[$_]} = 1 for (@contindx);
+	    $$brd_hash{$v[$ncontpertable]} = 1;
+	}
+    }
+}
+
+sub check_absence_boards {
+    my ($hash, $rnds, $brd_hash) = @_;
+
+    debug("split", 4, "check absence $hash, ($rnds), $brd_hash");
+    for my $r (split /:/, $rnds) {
+	for my $t (1..$total_tables) {
+	    my $h = $$hash{"$r:$t"};
+	    next unless (defined($h));
+	    my @v = split /:/, $h;
+	    if ($$brd_hash{$v[$ncontpertable]}) {
+		die "board $v[$ncontpertable] used in round $r, table $t";
+	    }
+	}
+    }
+}
+
+sub check_absence_conts {
+    my ($hash, $rnds, $tbls, $cont_hash) = @_;
+
+    debug("split", 4, "check absence $hash, ($rnds), ($tbls), $cont_hash");
+    for my $r (split /:/, $rnds) {
+	for my $t (split /:/, $tbls) {
+	    my $h = $$hash{"$r:$t"};
+	    next unless (defined($h));
+	    my @v = split /:/, $h;
+	    for (@contindx) {
+		if ($$cont_hash{$v[$_]}) {
+		    die "contestant $v[$_] played in round $r, table $t";
+		}
+	    }
+	}
+    }
+}
+
+#
+# Draaien
+#
+
+sub do_draai {
+    my ($hash, $draai_rnds, $draai_conts) = @_;
+
+    return unless (defined($draai_rnds));
+
+    my @rndlist = make_list($draai_rnds, 1, $total_rounds);
+
+    $draai_conts = "1-$total_conts" unless (defined($draai_conts));
+    my @contlist = make_list($draai_conts, 1, $total_conts);
+    debug("draai", 2, "contlist: @contlist");
+
+    my @c = (0) x ($total_conts+1);
+    $c[$_] = 1 for (@contlist);
+    debug("draai", 2, "c = @c");
+    debug("draai", 1, "Draai rondes @rndlist voor deelnemers $draai_conts");
+    for my $rnd (@rndlist) {
+    	for my $table (1..$total_tables) {
+	    my $h = $$hash{"$rnd:$table"};
+	    next unless (defined($h));
+	    my @val_ar = split /:/,$h;
+
+	    my $s = 0;
+	    $s += $c[$val_ar[$_]] for (@contindx);
+	    if ($s > 0) {
+		my @draai_ar = @val_ar[@draaiindx];
+		$$hash{"$rnd:$table"} = join(':', @draai_ar);
+		debug("draai", 9, "Round $rnd, table $table, val @val_ar, gedraaid @draai_ar");
+	    }
+	}
+    }
+}
+
+#
+# Balans
+# Maybe add arguments to allow balans running on subschedules?
+#
+
+sub do_balans {
+    my ($hash, $arg) = @_;
+    my ($outfh);
+    my (@Qf);
+
+    #
+    # Pairs only for now
+    #
+    set_contest_type("P");
+
+    #
+    # Make arguments to call balans
+    #
+    my $argstr = "";
+
+    if (defined($arg)) {
+	$argstr = join(' ', split(/,/, $arg));
+    } else {
+	# Count how many tables can stay fixed without risk
+	my $fixed = 0;
+	for my $t (1..$total_tables) {
+	    my $h = $$hash{"1:$t"};
+	    last unless (defined($h));
+	    my @val = split(/:/, $h);
+	    last unless ($val[$ncontpertable] == $t);
+	    $fixed = $t;
+	}
+	if ($fixed) {
+	    $argstr = "-f $fixed";
+	    debug("balans", 1, "fixed tables $fixed, argument $argstr");
+	}
+    }
+
+    #
+    # Create input for balans
+    #
+    open($outfh, ">_balans.txt") || die "$!";
+    binmode $outfh;
+
+    write_asc_file($outfh, $hash, $total_rounds, $total_tables, $total_conts, $total_brdsets);
+    close $outfh;
+
+    #
+    # Call balans and parse and proces diagnostic output
+    # The generated file by balans is *not used
+    #
+
+    my $ndraai = 0;
+    open($cmdfh, "./balans $argstr|") || die;
+    while (<$cmdfh>) {
+	chomp;
+	debug("balans", 8, $_);
+	if (/^Switched tables,.*by ([0-9])/) {
+	    my $switchchar = $1;
+	    for my $r (1..$total_rounds) {
+		my $line = <$cmdfh>;
+		@switched_bool = split ' ', $line;
+		debug("balans", 2, "switched_bool @switched_bool");
+		for my $t (1..$total_tables) {
+		    my $sw = shift @switched_bool;
+		    if (!defined($sw) || $sw !~ /^[0-9]$/) {
+			die "Balans uitvoer, ronde $r, tafel $t, switch onduidelijk";
+		    }
+		    debug("balans", 3, "Round $r, table $t, switch $sw");
+		    next if ($sw != $switchchar);
+
+		    #
+		    # Arrowswitch this round/table
+		    #
+		    my $h = $$hash{"$r:$t"};
+		    next unless (defined($h));
+		    my @val_ar = split /:/,$h;
+		    my @draai_ar = @val_ar[@draaiindx];
+		    $$hash{"$r:$t"} = join(':', @draai_ar);
+		    $ndraai++;
+		}
+	    }
+	}
+	#
+	# Save Qf before and after
+	#
+	if (/Qf=([^,]*),/) {
+	    push @Qf, $1;
+	}
+    }
+    my $Qf_str = $#Qf == 0 ? "gelijk gebleven op $Qf[0]" : "verbeterd van $Qf[0] naar $Qf[1]";
+    debug("balans", 0, "Aanroep: balans $argstr, $ndraai draaiingen, Qf ", $Qf_str);
+    close $cmdfh;
+    die "Balans faalde" if($?);
+}
+
+#
+# Krimp schema in met 1 tafel/2 paren
+#
+sub find_pair {
+    my ($pr, $rnd) = @_;
+
+    for my $t (1..$total_tables) {
+	my $h = $data_out{"$rnd:$t"};
+	next unless(defined($h));
+	my @v = split /:/, $h;
+	for my $c (0..1) {
+	    return $t if ($v[$c] == $pr);
+	}
+    }
+    return undef;
+}
+
+sub do_paarweg {
+    my ($pair1, $pair2) = @_;
+    my ($ns_pair, $ew_pair);
+
+    # Alleen met paren
+    set_contest_type("P");
+    for my $r (1..$total_rounds) {
+	my $t1 = find_pair($pair1, $r);
+	my $t2 = find_pair($pair2, $r);
+	next unless (defined($t1));
+	next unless (defined($t2));
+	($p11, $p12, $b1) = split /:/, $data_out{"$r:$t1"};
+	($p21, $p22, $b2) = split /:/, $data_out{"$r:$t2"};
+	$data_out{"$r:$t1"} = undef;
+	$data_out{"$r:$t2"} = undef;
+	if ($t1!=$t2 && $b1 == $b2) {
+	    # Same boards, different tables
+	    # Their opps can play each other
+	    #
+	    # What if they played same direction?
+	    #
+	    my $lowtable = $t1 < $t2 ? $t1 : $t2;
+	    if ($p11 != $pair1) {
+		# Surviving pair, sat NS
+		$ns_pair = $p11;
+		$ew_pair = $p21 != $pair2 ? $p21: $p22;
+	    } else {
+		$ew_pair = $p12;
+		$ns_pair = $p21 != $pair2 ? $p21: $p22;
+	    }
+	    $data_out{"$r:$lowtable"} = join(':', $ns_pair, $ew_pair, $b1);
+	}
+    }
+}
+
+sub do_krimp {
+
+    do_paarweg($total_conts-1, $total_conts);
+    $total_conts -= 2;
+}
+
+#
+# Check for always empty last tables
+#
+
+sub do_check_empty {
+    my ($hash) = @_;
+
+    for my $t (reverse (1..$total_tables)) {
+	for my $r (1..$total_rounds) {
+	    return if (defined($$hash{"$r:$t"}));
+	}
+	# Since we are here this table must have been empty in each round
+	$total_tables--;
+    }
+}
+
+#
+# Squeeze out all empty tables
+#
+
+sub do_leegweg {
+    my ($hash) = @_;
+
+    for my $r (1..$total_rounds) {
+	my $rt = 0;
+	for my $t (1..$total_tables) {
+	    my $info = $$hash{"$r:$t"};
+	    if (defined($info)) {
+		$rt++;
+		$$hash{"$r:$rt"} = $info;
+	    }
+	}
+	for my $t ($rt+1..$total_tables) {
+	    $$hash{"$r:$t"} = undef;
+	}
+    }
+}
+
+#
+# generators
+#
+
+#
+# Arrow switches for barometer Howell
+# According to table at page 224 of Big Orange Book
+#
+
+%eh_arrowswitch = (
+    2, "",
+    3, "",
+    4, "4",
+    5, "4",
+    6, "3",
+    7, "3,5-7",
+    8, "5,7,8",
+    9, "3,4,8",
+    10, "3,4,9",
+    11, "3,4,9,11",
+    12, "6,8,11,12",
+    13, "4,5,7,9-13",
+    14, "3-7,11,12,14",
+    15, "5-7,9-11,13,14",
+    16, "4,7,12-14,16",
+    17, "4,9,10,13,15-17",
+    18, "3,5,8,9,11-15",
+    19, "3,4,6,8,15,16",
+    20, "5,9,11,14,17-19",
+    21, "3,5,8,9,11,12,18",
+    22, "3,4,6,8,9,13,19-21",
+    23, "3-5,8,11,13-15,17-20",
+    24, "6,11,12,14,16,20,21,23,24",
+    25, "4,11-13,18,21,22,24",
+    26, "3-5,8,10,13,14,16,20",
+    27, "5-10,12,13,15,18,19,22-24,26",
+    28, "4-7,9,13,15,18,23,25,26",
+    29, "3,4,6-8,11,12,17-21,23,25,27,28",
+    30, "3,7,9,11,12,14,15,19,24,25",
+    31, "3,7-12,15,17,18,21-23,25-28,30,31",
+    32, "3,5-7,13,15,17,18,21,24,29",
+    33, "3-6,8-10,12,13,15,16,20,21,23,25-27,29",
+    34, "3,4,6,8,9,12-14,19,21,28,29,31-33",
+    35, "3,6,8-10,13,14,19-21,23,28,35",
+    36, "8,12,14,15,18,22-24,27,29,32,34-36",
+    37, "3,4,6,10,12-15,18,20,23,27,28,34",
+    38, "3-7,11,16,17,21,24,26,28-30,32,35-38",
+    39, "6-9,11,12,14,18,21,23,25-29,31-33,36,37,39",
+    40, "4,7,8,13,15,16,18,25,28-31,34-36,38,40",
+    41, "4,5,8,11,13,17,22,24,27,28,32,34-38",
+    42, "3,6,7,9,14-16,19-21,23,25,33,36,36,40",
+    43, "5,8,9,14-16,19,27,28,30,32,34,36,37,39-42",
+    44, "3,4,6,10-12,16,20,22,29-31,33,34,36,37,41,42,44",
+    45, "10,12,14,16,19,22,23,26,27,31,32,34,36,37,42-45",
+    46, "6,8,9,11-14,16,18,21,22,27,31,33,38,39,41,42,45,46",
+    47, "5,7,9,11,12,15,16,19-22,25,28,30,33-40,42,44-47",
+    48, "4,6,8-11,14,15,17,18,20,28,30,32,33,36,43-45",
+);
+
+sub gen_endlesshowell {
+    my ($ntables, $nmoving) = @_;
+
+    debug("generate", 1, "endless howell $ntables tables $nmoving moving pairs");
+    my $npairs = 2*$ntables;
+    my $nrounds = $nmoving;
+
+    if ($nmoving > $npairs-1 || $nmoving < $ntables || $nmoving%2 == 0) {
+	die "Endless Howell $ntables tables with $nmoving moving pairs not possible";
+    }
+    set_contest_type("P");
+
+    my @as_ar = (0) x ($ntables+1);
+    if ($npairs == $nmoving+1) {
+	# Standard Endless Howell
+	my $ehar = $eh_arrowswitch{$ntables};
+	if (!defined($ehar)) {
+	    warn "Arrow switch table for $ntables tables unknown" if($auto_draai);
+	} else {
+	    $as_ar[$_] = $auto_draai for (make_list($ehar, 1, $ntables));
+	    debug("generate", 5, "as_ar: @as_ar");
+	}
+    }
+    for my $table (1..$ntables) {
+	my $ns = $npairs +1 -$table;
+	my $ew = $npairs +1 -$ns;
+	($ns, $ew) = ($ew, $ns) if ($as_ar[$table]);
+
+	debug("generate", 5, "table $table, ns $ns, ew $ew");
+	for my $round (1..$nrounds) {
+	    my $nsnow = $ns>$nmoving ? $ns : rotate($ns, $round-1, 1, $nrounds);
+	    my $ewnow = rotate($ew, $round-1, 1, $nrounds);
+	    debug("generate", 7, "t=$table, r=$round, b=$round, ns,ew=$nsnow,$ewnow");
+	    enter_meeting($round, $table, $round, ($nsnow, $ewnow));
+	}
+    }
+    deelschema_klaar($ntables, $npairs, $nrounds, $nrounds);
+}
+
+#
+# Various type of Mitchells
+#
+
+#
+# Common routine to enter them after first round setup
+#
+
+sub enter_mitchell {
+    my ($ns_pair, $ew_pair, $brd, $ntables, $nstat, $nrounds, $skiprnd, $steps) = @_;
+
+
+    $steps = "0:-1:1" unless(defined($steps));
+
+    #
+    # Attempt to make Scheveningen style Mitchell
+    # works for odd and skip mitchells
+    # not for rest yet, needs some thought
+    #
+
+    my ($stt_step, $mov_step, $brd_step) = split /:/, $steps;
+
+    debug("generate", 4, "enter_mitchell: ns ew brd, tables $ntables, stat $nstat, rnds $nrounds, skip $skiprnd");
+
+    my $nmoving = 2*$ntables-$nstat;
+    set_contest_type("P");
+    for my $r (1..$nrounds) {
+	my $s = 0;
+	$s++ if ($r>$skiprnd);
+	debug("generate", 8, ,"em: round $r, skip $s");
+	for my $t (1..$ntables) {
+	    my $ns = $$ns_pair[$t-1];
+	    my $ew = $$ew_pair[$t-1];
+	    for my $c ($ns, $ew) {
+		my ($inc, $min, $max);
+
+		if ($c > $nstat) {
+		    $inc = $mov_step*($r-1+$s);
+		    $min = $nstat+1;
+		    $max = 2*$ntables;
+		} else {
+		    $inc = $stt_step*($r-1);
+		    $min = 1;
+		    $max = $nstat;
+		}
+		$c = rotate($c, $inc, $min, $max);
+	    }
+
+	    my $brdset = rotate($$brd[$t-1], $brd_step*($r-1), 1, $nmoving);
+	    # print "meeting: $r $t $brdset $ns $ew\n";
+	    enter_meeting($r, $t, $brdset, ($ns, $ew));
+	}
+    }
+    deelschema_klaar($ntables, 2*$ntables, $nrounds, $nmoving);
+}
+
+#
+# Mitchell without expansion. Odd, Even relay and Even skip
+#
+
+sub gen_mitchell {
+    my ($scheveningen, $ntables, @args) = @_;
+
+    debug("generate", 1, "mitchell $ntables tables, args=@args");
+
+    my $nrounds = $ntables;
+    my $skiprnd = $nrounds;	# No skip
+    my $steps = $scheveningen? "-1:1:0" : undef;
+    my @brd = (1..$ntables);
+    my @ns = (1..$ntables);
+    my @ew = ($ntables+1..2*$ntables);
+
+    if ($ntables%2==0) {
+	#
+	# Even tables
+	#
+	if (defined($args[0])) {
+	    #
+	    # Skip after this round
+	    #
+	    my $tempskip = $args[0];
+	    if ($tempskip != 0) {
+		$skiprnd = $args[0];
+		die "Wrong skip"
+		    unless (2*$skiprnd==$ntables or 2*$skiprnd==$ntables-2);
+		$nrounds--;
+	    }
+	} else {
+	    #
+	    # relay Mitchell
+	    # If generated as a Barometer automatically right
+	    #
+
+	    die "Relay Mitchell als Scheveningen niet gesupport"
+		if($scheveningen);
+	    my $halftables = $ntables/2;
+	    @brd = (1..$halftables, $halftables+2..$ntables, 1);
+	}
+    }
+
+    debug("generate", 6, "ns=@ns, ew=@ew, brd=@brd");
+    enter_mitchell(\@ns, \@ew, \@brd, $ntables, $ntables, $nrounds, $skiprnd, $steps);
+}
+
+#
+# Web Mitchell, ACBL style movement
+# Boards are placed special, but move more or less normal
+# NS stationary, EW move as in normal Mitchell
+#
+# Two halves, where boards circulate, two copies of boards needed
+# All pairs play all boards
+#
+sub gen_web_mitchell {
+    my ($ntables, $nbrdsets) = @_;
+    my (@ns, @ew, @brd, @brddir);
+    my ($oddtable);
+
+    use integer;
+    set_contest_type("P");
+    $oddtable = ($ntables%2 != 0);
+    my $halftable = $ntables/2;
+    die "web mtchell table/brd mismatch"
+    	if ($nbrdsets < $halftable || $nbrdsets >= $ntables);
+    @ns = (1..$ntables);
+    @ew = ($ntables+1..2*$ntables);
+    if ($oddtable) {
+	my $halfsets = ($ntables-$nbrdsets)/2;
+	@brd = (1..$nbrdsets, 1..$halfsets, reverse(1..$halfsets-1), $nbrdsets);
+	@brddir = ((1,) x ($nbrdsets+$halfsets), (-1,) x ($ntables-$halfsets));
+    } else {
+	@brd = (1..$halftable, reverse(1..$halftable-1), $nbrdsets);
+	@brddir = ((1,) x $halftable, (-1,) x $halftable);
+    }
+    $skip = ($nbrdsets%2==0);
+    for my $r (0..$nbrdsets-1) {
+	for my $t (0..$ntables-1) {
+	    enter_meeting($r+1, $t+1,
+		rotate($brd[$t], $brddir[$t] * $r, 1, $nbrdsets), $ns[$t],
+		rotate($ew[$t], $r >= $nbrdsets/2 ? -$r-$skip : -$r, $ntables+1, 2*$ntables));
+	}
+    }
+    deelschema_klaar($ntables, 2*$ntables, $nbrdsets, $nbrdsets);
+}
+
+#
+# Double Weave Mitchell
+# alleen voor viervouden tafels
+#
+# Schema zonder lenen
+#
+
+@dw_draai = (
+    0,
+    "4",
+    "4,7,8",
+    "6,7,9,10",
+    "8,9,13,14,16"
+);
+
+sub gen_dw_mitchell {
+    my ($ntables) = @_;
+    my (%ew, %brd);
+
+    die "Double Weave Mitchell alleen voor viervouden" unless($ntables%4==0);
+    for my $t (1..$ntables) {
+	$ew{"1:$t"} = $ntables+$t;
+	$brd{"1:$t"} = $t;
+    }
+    for my $r (1..$ntables-1) {
+	my $nr = $r+1;
+	for my $t (1..$ntables) {
+	    my ($nt, $rot);
+
+	    #
+	    # Move EW pair, odd pairs go up, even pairs down
+	    #
+	    my $this_ew = $ew{"$r:$t"};
+	    my $oddew = $this_ew%2;
+	    $nt = rotate($t, 2*$oddew-1, 1, $ntables);
+	    $ew{"$nr:$nt"} = $this_ew;
+
+	    #
+	    # Move board. Opposite direction as EW pair, and
+	    # half way the movement half way across the field
+	    #
+	    my $this_brd = $brd{"$r:$t"};
+	    if ($r == $ntables/2) {
+		# After half the rounds major change
+		# Boards move half way the room
+		$rot = $r;
+	    } else {
+		$rot = 1-2*$oddew;
+	    }
+	    $nt = rotate($t, $rot, 1, $ntables);
+	    $brd{"$nr:$nt"} = $this_brd;
+	}
+    }
+    set_contest_type("P");
+    for my $r (1..$ntables) {
+	for my $t (1..$ntables) {
+	    enter_meeting($r, $t, $brd{"$r:$t"}, ($t, $ew{"$r:$t"}));
+	}
+    }
+    handle_arg("draai", $dw_draai[$ntables/4]) if ($ntables <= 16 && $auto_draai);
+    deelschema_klaar($ntables, 2*$ntables, $ntables, $ntables);
+}
+
+#
+# Expanded Mitchell according to MAFA
+#
+
+%em1_arrowswitch = (
+    3, "4",
+    4, "5",
+    5, "5,6",
+    6, "5,7",
+    7, "7,8",
+    8, "4,8,9",
+    9, "7,9,10",
+    10, "7,8,11",
+    11, "7-9,12",
+    12, "6,8,11,13",
+    13, "6,8,9,13,14",
+    14, "6,8,9,13,15"
+);
+
+%em2_arrowswitch = (
+    5, "7",
+    6, "5-8",
+    7, "7,9",
+    8, "6-8,10",
+    9, "6,7,9,11",
+    10, "7,9,10,12",
+    11, "6-8,11,13",
+    12, "7,10,13,14",
+    13, "4,6,8,12,14,15"
+);
+
+%em3_arrowswitch = (
+    6, "7,9",
+    7, "8,10",
+    8, "7,8,11",
+    9, "5-8,10,12",
+    10, "8,9,11,13",
+    11, "6,8,9,10,14",
+    12, "7,9,10,12,15"
+);
+
+sub gen_emitchell {
+    my ($ntables, @args) = @_;
+    my ($arrow_switch_rounds);
+    my (@ns, @ew, @brd);
+
+    my $nrounds = $args[0];
+    my $npairs = 2*$ntables;
+    my $nstat = $npairs-$nrounds;
+
+    debug("generate", 4, "Expanded Mitchell, $ntables tafels, $nrounds rondes");
+    debug("generate", 4, "Expanded Mitchell, $npairs paren, $nstat zitters");
+
+    given ($nrounds-$ntables) {
+	when (1) {
+	    # One round expansion
+	    $arrow_switch_rounds = $em1_arrowswitch{$ntables};
+	    die "Verkeerd aantal tafels" unless (defined($arrow_switch_rounds));
+
+	    my $boardtable = int $ntables/2;
+
+	    @ns = (1..$ntables);
+	    @ew = ($ntables+1..2*$ntables);
+	    @brd = (1..$boardtable, $boardtable+3-($ntables%2)..$ntables+1, 1);
+	}
+	when (2) {
+	    # Two round expansion
+	    $arrow_switch_rounds = $em2_arrowswitch{$ntables};
+	    die "Verkeerd aantal tafels" unless (defined($arrow_switch_rounds));
+
+	    if ($ntables%2==1) {
+		# Odd table Mitchell
+		my $basetables = $ntables-3;
+		my $boardtable = int $basetables/2;
+		@ns = (1..$basetables, $npairs-1, $basetables+1, $npairs);
+		@ew = ($ntables-1..$ntables+$basetables-2, $npairs-4..$npairs-2);
+		@brd = (1..$boardtable, $boardtable+3..$nrounds);
+	    } else {
+		# Even table Mitchell
+		my $pivot = int $nrounds/2;
+		@ns = (1..$pivot-1, $ntables+$pivot-1, $pivot..$ntables-3, $npairs, $ntables-2);
+		@ew = ($ntables-1..$ntables+$pivot-2, $ntables+$pivot..2*$ntables-1);
+		@brd = (1..$ntables-1, $nrounds);
+	    }
+	}
+	when (3) {
+	    # Three round expansion
+	    $arrow_switch_rounds = $em3_arrowswitch{$ntables};
+	    die "Verkeerd aantal tafels" unless (defined($arrow_switch_rounds));
+	    my $basetables = $ntables-3;
+	    @ns = (1..$basetables, $npairs-1, $npairs-3, $npairs);
+	    @ew = ($basetables+1..2*$basetables, $npairs-5, $npairs-4, $npairs-2);
+	    my $boardtable = int $basetables/2;
+	    @brd[0..$boardtable-1] = (1..$boardtable);
+	    if ($basetables%2==0) {
+		@brd[$boardtable..$ntables-1] = ($boardtable+4..$ntables+3);
+	    } else {
+		@brd[$boardtable..$ntables-1] = ($boardtable+3..$ntables+1, $nrounds);
+	    }
+	}
+	default {
+	    die "Expanded mitchell $ntables tafels, $nrounds rondes kan niet";
+	}
+    }
+
+    handle_arg("draai", $arrow_switch_rounds, "1-$nstat") if ($auto_draai);
+
+    debug("generate", 6, "ns=@ns, ew=@ew, brd=@brd");
+    enter_mitchell(\@ns, \@ew, \@brd, $ntables, $nstat, $nrounds, $nrounds);
+}
+
+sub gen_vasneg {
+    my ($ntables, $nrounds, $one_of_x) = @_;
+    my (@basetables);
+    my ($pos, $oldpos, $inbreektafel);
+
+    if ($nrounds != 5 && $nrounds !=7 && $nrounds != 11 && $nrounds != 13 && $nrounds != 17) {
+    	die "Alleen priem aantal rondes, $nrounds is dat niet";
+    }
+    if ($ntables < $nrounds || $ntables > 2*$nrounds) {
+    	die "Aantal tafels tussen aantal ronden en het dubbele, $ntables is dat niet";
+    }
+    $one_of_x = lc $one_of_x;
+    if ($one_of_x ne "1" && $one_of_x ne "x") {
+	die "Alleen 1 of X";
+    }
+    @basetables = (1..$nrounds*2);
+    debug("generate", 1, "basetables: @basetables");
+
+    set_contest_type("P");
+
+    for my $rnd (1..$nrounds) {
+	my (@nspairs, @ewpairs, @boards);
+
+	for my $pos (0..$nrounds-1) {
+	    #
+	    # Standaard tafels
+	    #
+	    $oldpos = $pos-2*($rnd-1);
+	    $oldpos += $nrounds while ($oldpos < 0);
+	    $nspairs[$pos] = $basetables[2*$oldpos];
+
+	    $oldpos = $pos-3*($rnd-1);
+	    $oldpos += $nrounds while ($oldpos < 0);
+	    $ewpairs[$pos] = $basetables[2*$oldpos+1];
+
+	    $boards[$pos] = $pos+1;
+	}
+	for my $pos ($nrounds..$ntables-1) {
+	    #
+	    # Aanbreitafels
+	    #
+	    $ewpairs[$pos] = 2*$pos+2;
+
+	    $inbreektafel = $pos-$nrounds+$rnd-1;
+	    $inbreektafel -= $nrounds while ($inbreektafel >= $nrounds);
+	    debug("generate", 7, "pos $pos, inbreektafel $inbreektafel");
+
+	    $boards[$pos] = $inbreektafel+1;
+	    #
+	    # In eerste ronde van eerste zitting kunnen aanbreiers tegen elkaar
+	    #
+	    if ($rnd == 1 && $one_of_x eq "1") {
+		$nspairs[$pos] = 2*$pos+1;
+	    } else {
+		$nspairs[$pos] = $nspairs[$inbreektafel];
+		$nspairs[$inbreektafel] = 2*$pos+1;
+	    }
+	}
+	debug("generate", 5, "nspairs round $rnd: @nspairs");
+	debug("generate", 5, "ewpairs round $rnd: @ewpairs");
+	debug("generate", 5, "boards round $rnd: @boards");
+	for my $t (0..$ntables-1) {
+	    enter_meeting($rnd, $t+1, $boards[$t], ( $nspairs[$t], $ewpairs[$t]) );
+	}
+    }
+    deelschema_klaar($ntables,2*$ntables,$nrounds,$nrounds);
+    handle_arg("draai", "2") if ($auto_draai);
+}
+
+sub gen_null {
+    my ($nt) = @_;
+
+    set_contest_type("P");
+
+    deelschema_klaar($nt, 2*$nt, 0, 0);
+}
+
+#
+# Read .gen file
+# Movement usually from the Big Orange Book
+#   Movements - A fair approach
+#
+
+sub readgenfile {
+    my ($filename) = @_;
+    my ($prev_cont_flag, $cflag, $c);
+    my (@fields, $nfields, $cfields);
+    my (@contflags, $barometer);
+    my (@mv_begin, @mv_end, @st_end, @ingroup, $groupsize, $n_groups, $n_stanzas);
+
+    debug("generate", 0, "readgenfile($filename)");
+
+    #
+    # First read file
+    #
+    open ( FILE, "<$filename" ) || die $!;
+    my $ntables = 0;
+    my $last_line_seen = 0;
+    my $ncont = 0;
+    my $hcont = 0;
+    my $highestboard = 0;
+    while (read_data_line(FILE)) {
+	@fields = split ' ';
+	$nfields = @fields;
+	# $nfields = $#fields + 1;
+	debug("generate", 2, "Fields in: @fields");
+
+	#
+	# File should contain equal size lines
+	# First line determines what it looks like
+	#
+	if ($ntables == 0) {
+	    given ($nfields) {
+		when (2) {
+		    set_contest_type("P");
+		    $barometer = 1;
+		}
+		when (3) {
+		    set_contest_type("P");
+		    $barometer = 0;
+		}
+		when (4) {
+		    set_contest_type("I");
+		    $barometer = 1;
+		}
+		when (5) {
+		    set_contest_type("I");
+		    $barometer = 0;
+		}
+		default {
+		    die "$nfields fields unrecognized";
+		}
+	    }
+	    $nfields_save = $nfields;
+	} else {
+	    if ($nfields > $nfields_save) {
+		# Cannot have more fields later
+		die "Should have $nfields_save fields on line";
+	    }
+	    if ($nfields < $nfields_save) {
+		# Possible on last line only, sitouts
+		$last_line_seen = 1;
+		die "Regel @fields klopt niet" if($nfields == $ncontpertable);
+	    }
+	}
+
+	#
+	# First handle contestant numbers with flags
+	# Handle fields upto a maximum of 2 or 4(pairs or indiv)
+	#
+	$cfields = $nfields > $ncontpertable ? $ncontpertable : $nfields;
+	for my $cfno (0..$cfields-1) {
+	    $f = $fields[$cfno];
+	    debug("generate", 8, "Contestant field $f");
+	    #
+	    # Field should be a number with optional trailing character
+	    #
+	    if ($f =~ /^(\d+)([_;.]?)$/ ) {
+		$contestant = $1;
+		$cflag = $2 ne "" ? $2 : " ";
+	    	debug("generate", 9, "Cont $contestant, flag $cflag");
+	    } else {
+		die "Field $f unrecognized";
+	    }
+	    die "Nummer $contestant al eerder gezien"
+		if (defined($contflags[$contestant]));
+	    $ncont++;
+	    $hcont = $contestant if ($contestant > $hcont);
+	    $fields[$cfno] = $contestant;
+	    $contflags[$contestant] = $cflag;
+	}
+
+	#
+	# If line was not full, it is last line with sitout contestants
+	# Quit reading
+	#
+	last if ($last_line_seen);
+
+	#
+	# Handle boardset, or lack thereof
+	#
+	if (!$barometer && $fields[$#fields] =~ /^[A-Z]$/) {
+	    $fields[$#fields] = ord($fields[$#fields]) - ord('A') +1;
+	}
+	if ($barometer) {
+	    #
+	    # All tables start with boardset 1
+	    #
+	    push(@fields, 1);
+	}
+	debug("generate", 2, "Fields pr: @fields");
+
+	if ($fields[$#fields] > $highestboard) {
+	    $highestboard = $fields[$#fields];
+	}
+	#
+	# Now we have the first round at a table
+	#
+	$ntables++;
+	$first_round[$ntables] = join(":", @fields);
+    }
+
+    close FILE;
+
+    #
+    # File is read, information now in first_round[] and contflags[]
+    #
+
+    $contflags[0] = "";
+    $first_round[0] = "";
+    debug("generate", 4, "Contflags: @contflags");
+    debug("generate", 4, "Ntables $ntables, first round @first_round");
+
+    if ($ncont != $hcont) {
+    	die "Highest contestant $hcont, number of contestants $ncont";
+    }
+
+    #
+    # Walk back from end of contflags. Mark ends of groups with a .
+    # Take note of the end of the groups
+    #
+
+    $prev_cont_flag = "X";
+    for ($c = $ncont; $c > 0; $c--) {
+	given ("$prev_cont_flag$contflags[$c]") {
+	    when (/[X_ ]_/) {
+	    }
+	    when (/[X_ ]\./) {
+		unshift(@mv_end, $c);
+	    }
+	    when (/[X_ ];/) {
+	    	unshift(@st_end, $c);
+	    }
+	    when (/[X_] /) {
+		$contflags[$c] = ".";
+		unshift(@mv_end, $c);
+	    }
+	    when (/[;. ] /) {
+	    }
+	    default {
+	    	warn "prev '$prev_cont_flag' now '$contflags[$c]'";
+	    }
+	}
+	$prev_cont_flag = $contflags[$c];
+    }
+    debug("generate", 4, "st_end: @st_end, mv_end: @mv_end");
+
+    #
+    # Not both ; and . groups allowed
+    # With . groups there is only one stanza, else equal to number of groups
+    #
+
+    if ($#st_end >= 0 && $#mv_end >= 0) {
+	die "Not both stanza(;) and full movement(.)";
+    }
+    if ($#st_end >= 0) {
+	@mv_end = @st_end;
+	$n_stanzas = $#mv_end+1;
+    } else {
+	$n_stanzas = 1;
+    }
+    $n_groups = $#mv_end + 1;
+
+    #
+    # For each group find beginning and keep track of groupnumber per contestant
+    #
+
+    @ingroup = (".") x ($ncont+1);
+    for my $s (0..$#mv_end) {
+	$c = $mv_end[$s];
+	debug("generate", 9, "s=$s, c=$c");
+	while ($contflags[$c-1] eq " ") {
+	    $c--;
+	}
+
+	$mv_begin[$s] = $c;
+	for $c ($mv_begin[$s]..$mv_end[$s]) {
+	    $ingroup[$c] = $s;
+	}
+    }
+
+    #
+    # Set groupsize to size of first group
+    # All other groups should be same size, check
+    #
+
+    $groupsize = $mv_end[0] - $mv_begin[0] + 1;
+    for my $s (1..$#mv_end) {
+	if ($mv_end[$s] - $mv_begin[$s] +1 != $groupsize) {
+	    die "Groups not same size";
+	}
+    }
+
+    #
+    # There should be at least as many boards as the groupsize
+    # Usually they are the same
+    #
+
+    if ($groupsize > $highestboard) {
+	$highestboard = $groupsize;
+    }
+    debug("generate", 4, "mv_begin: @mv_begin, mv_end: @mv_end");
+    debug("generate", 4, "groupsize:$groupsize, highestboard:$highestboard, ingroup: @ingroup");
+
+    #
+    # Now generate the movement proper
+    #
+
+    for my $sz (0..$n_stanzas-1) {
+	# For each stanza, numbered from 0
+
+	for my $rnd (0..$groupsize-1) {
+	    # For each round within the stanza, numbered from 0
+
+	    for my $tab (1..$ntables) {
+		# For each table, numbered from 1
+
+	    	my @v = split /:/, $first_round[$tab];
+		debug("generate", 9, "sz=$sz, rnd=$rnd, tab=$tab, v=@v");
+		for my $c (@contindx) {
+		    my $cont = $v[$c];
+		    my $grp = $ingroup[$cont];
+		    debug("generate", 9, "c=$c, cont=$cont, grp=$grp");
+		    #
+		    # If grp is . then stationary
+		    # else compute new contestant
+		    #
+		    if ($grp ne ".") {
+			$cont = $cont-$mv_begin[$grp];
+			$cont = ($cont + $rnd)%$groupsize;
+			$cont += $mv_begin[($grp+$sz)%$n_groups];
+			$v[$c] = $cont;
+		    }
+		}
+
+		#
+		# Compute new board
+		#
+
+		my $brd = rotate($v[$ncontpertable], $rnd, 1, $highestboard);
+		$brd += $sz*$highestboard;
+
+		enter_meeting($sz*$groupsize+$rnd+1, $tab, $brd, @v[@contindx]);
+	    }
+	}
+    }
+
+    deelschema_klaar($ntables, $ncont, $n_stanzas*$groupsize, $n_stanzas*$highestboard);
+}
+
+#
+# Read .mvt files from Jeanie, the movement wizard
+# Heavily borrowing code from Peter Smulders here
+#
+
+sub read_mvt_file {
+    my ($filename) =@_;
+    my ($individual, $maxcont, $maxboard, $maxround, $maxtable, $EWadd) =
+    				(0, 0, 0, 0, 0, 0);
+    my (@store);
+    my (@cont);
+
+    open ( FILE, "<$filename" ) || die $!;
+
+    while(<FILE>) {
+    	chomp;
+	my ($irec, $r, $t, $ns, $ew, $brd, $arrow) = split;
+	next unless ($irec >= 100 && defined($arrow) && $arrow =~ /^[TF]$/);
+	debug("mvt", 3, "Round $r, table $t, pl=($ns, $ew), board $brd, as $arrow");
+	if ($ns > 100) {
+	    # Individual
+	    use integer;
+
+	    $individual = 1;
+	    @cont = ($ns/100, $ns%100, $ew/100, $ew%100);
+	} else {
+	    @cont = ($ns, $ew);
+	}
+
+	for my $p (@cont) {
+	    $maxcont = $p if ($p > $maxcont);
+	}
+	$maxboard = $brd if ($brd > $maxboard);
+	$maxround = $r if ($r > $maxround);
+	$maxtable = $t if ($t > $maxtable);
+
+	push @store, join(',', $r, $t, $brd, $arrow, @cont); 
+    }
+    debug("mvt", 1, "Individual $individual, mr=$maxround, mt=$maxtable, mc=$maxcont, mb=$maxboard");
+    debug("mvt", 2, "Store: @store");
+    close FILE;
+
+    # Now enter stuff from the @store array
+
+    if (!$individual && $maxtable == $maxcont) {
+	$maxcont *= 2;
+	# All EW pairs must have maxtable added to them
+	$EWadd = $maxtable;
+    }
+
+    set_contest_type($individual ? "I" : "P");
+    for (@store) {
+	my ($r, $t, $brd, $arrow, @cont) = split /,/;
+	if (!$individual) {
+	    $cont[1] += $EWadd;
+	    if($arrow eq "T") {
+		@cont = ($cont[1], $cont[0]);
+	    }
+	}
+	enter_meeting($r, $t, $brd, @cont);
+    }
+    deelschema_klaar($maxtable, $maxcont, $maxround, $maxboard);
+}
+
+
+#
+# Reading and writing ASCII movements (.ASC files)
+#
+# Format: first line #contestants #tables #rounds #boardsets 0/1(p/i)
+# After that one line per round, tables from left to right
+#
+
+sub readascfile {
+    my ($filename) = @_;
+    my ($npairs, $ntables, $nrounds, $nbrdsets, $pi);
+
+    # Separator pattern
+    my $seppat = qr/[\s\-,:;]+/;
+
+    open ( FILE, "<$filename" ) || die $!;
+
+    my $header = read_data_line(FILE);
+    die "empty file $filename" if (!defined($header));
+    my @hdr = split($seppat, $header);
+    debug("ascio", 1, "Header: ", join(",",@hdr));
+    shift @hdr if ($hdr[0] eq "");
+    #
+    # Extra g argument wordt genegeerd
+    #
+    if ($hdr[$#hdr] eq "g") {
+	# Getallen ipv letters, maakt mij niks uit
+	pop(@hdr);
+    }
+    if ($#hdr == 4) {
+	#
+	# Complete standaard header
+	#
+	($npairs, $ntables, $nrounds, $nbrdsets, $pi) = @hdr;
+	must_be_number($npairs);
+	must_be_number($ntables);
+	must_be_number($nrounds);
+	must_be_number($nbrdsets);
+	must_be_number($pi);
+    } elsif ($#hdr == 1) {
+	#
+	# Incomplete header, oude standaard
+	#
+	($npairs, $nrounds) = @hdr;
+	must_be_number($npairs);
+	must_be_number($nrounds);
+	die "oneven paren" if ($npairs%2 == 1);
+	$ntables = $npairs/2;
+	$nbrdsets = $nrounds;
+	$pi = 0;
+    } else {
+	die "Header van $filename onjuist";
+    }
+    debug("ascio", 0, "pairs $npairs tables $ntables rounds $nrounds boardsets $nbrdsets p/i $pi");
+
+    set_contest_type($pi ? "I" : "P");
+
+    my $round = 0;
+    my $warnings = 0;
+    while($round < $nrounds && read_data_line(FILE)) {
+	$round++;
+	my @t = split $seppat;
+	shift @t if ($t[0] eq "");
+	#
+	# @t bevat nu alle velden van deze regel
+	#
+	debug("ascio", 3, "Line fields $#t ntable $ntables pertable $ncontpertable");
+	die "file $filename round $round wrong line $_"
+	    if ($#t+1 != $ntables*($ncontpertable+1));
+
+	for my $table (1..$ntables) {
+	    my ($brdgroup, $orig_brdgroup);
+
+	    @td = splice(@t, 0, $ncontpertable+1);
+	    debug("ascio", 4, "td=@td, t=@t");
+
+	    $orig_brdgroup = $td[$#td];
+	    if ($orig_brdgroup =~ /^[A-Z]$/) {
+		# Alphabetical, change to number internally
+		$brdgroup = ord($orig_brdgroup) - ord('A') +1;
+	    } else {
+		$brdgroup = $orig_brdgroup;
+	    }
+
+	    if ($brdgroup > $nbrdsets) {
+		warn("File: $filename boardset $orig_brdgroup te hoog");
+		$warnings++;
+		next;
+	    }
+	    enter_meeting($round, $table, $brdgroup, @td[0..$ncontpertable-1]);
+	}
+    }
+    die "Schema fout(zie waarschuwingen)"
+	if ($warnings);
+    die "Wrong number of rounds($round) in $filename"
+	if ($round != $nrounds);
+
+    deelschema_klaar($ntables, $npairs, $nrounds, $nbrdsets);
+
+    close FILE;
+}
+
+sub write_asc_or_csv {
+    my ($fh, $hash, $rh, $th, $ch, $bh, $csv) = @_;
+    my ($sep, $cfmt, $blfmt, $bnfmt);
+
+    my $gflag = "";
+    my $p_or_i = 0;
+    $gflag = "g" if ($csv || $bh > 26);
+    $p_or_i = 1 if ($ncontpertable > 2);
+
+    # .asc vs .csv
+    unless ($csv) {
+    	# ASC
+    	$sep = " ";
+	$cfmt = "%2d ";
+	$blfmt = "%c";
+	$bnfmt = $gflag ? "%2d" : "%1d";
+    } else {
+	# CSV
+	$sep = ";";
+	$cfmt = "%d$sep";
+	$bnfmt = "%d";
+    }
+    print $fh "$ch$sep$th$sep$rh$sep$bh$sep$p_or_i\r\n";
+
+    for my $round (1..$rh) {
+	for my $table (1..$th) {
+	    my $datastr = $$hash{"$round:$table"};
+	    $datastr = $emptydata unless (defined($datastr));
+	    my @tdata = split(/:/, $datastr);
+	    printf $fh $cfmt, $tdata[$_] for (@contindx);
+	    if ($tdata[$ncontpertable] && $gflag eq "") {
+		printf $fh $blfmt, $tdata[$ncontpertable]+ord('A')-1;
+	    } else {
+		printf $fh $bnfmt, $tdata[$ncontpertable];
+	    }
+	    print $fh $table==$th ? "\r\n" : "$sep";
+	}
+    }
+}
+
+sub write_asc_file {
+    my ($fh, $hash, $rh, $th, $ch, $bh) = @_;
+
+    write_asc_or_csv($fh, $hash, $rh, $th, $ch, $bh, 0);
+}
+
+sub write_csv_file {
+    my ($fh, $hash, $rh, $th, $ch, $bh) = @_;
+
+    write_asc_or_csv($fh, $hash, $rh, $th, $ch, $bh, 1);
+}
+
+#
+# reading and writing Pairs4.1 binary movement files
+#
+# Format of the file: all little endian 16-bit ints
+#
+# A list of data per table, for each table
+# a column of brdgroups
+# a 2 or 4 columns of participants
+# each column length nrounds
+#
+# No trivial way to determine pairs vs individua
+# Number of rounds has to be determined externally, normally from filename
+# This format has to be killed asap
+#
+
+sub readpairsfile {
+    my($filename, $ncont, $nrounds) = @_;
+    my(@ar_ar);
+    my($table, $columnsize, $fmt, $buffer);
+    my(@meet_ar);
+    my($brdset, $nbrdsets);
+
+    die "individual or pairs unknown" if ($type_UPI eq "U");
+
+    open ( FILE, "<$filename" ) || die $!;
+    binmode FILE;
+
+    for my $cont (0..$ncontpertable) {
+	# init two dimensional array
+	push (@ar_ar, [ 1 .. $nrounds ]);
+    }
+    $table = 0;
+    $columnsize = $nrounds*2;
+    $fmt = "(v)$nrounds";
+    $finished = 0;
+    $nbrdsets = 0;
+    until($finished) {
+	for my $cont ($ncontpertable, @contindx) {
+	    $bytesread = read(FILE, $buffer, $columnsize);
+	    if ($bytesread != $columnsize) {
+	    	if ($bytesread == 0 && $cont == $ncontpertable) {
+		    # Just EOF, finished
+		    $finished = 1;
+		    last;
+		}
+		die "Reading pairs file failed, read $bytesread bytes";
+	    }
+	    @{$ar_ar[$cont]} = unpack $fmt, $buffer;
+	    debug("pairsio", 6, "@{$ar_ar[$cont]} ");
+	}
+	last if $finished;
+	$table++;
+	for my $round (1..$nrounds) {
+	    for my $cont (@contindx) {
+		$meet_ar[$cont] = $ar_ar[$cont][$round-1];
+	    }
+	    $brdset = $ar_ar[$ncontpertable][$round-1];
+	    enter_meeting($round, $table, $brdset, @meet_ar);
+	    $nbrdsets = $brdset if ($brdset > $nbrdsets);
+	}
+    }
+
+    deelschema_klaar($table, $ncont, $nrounds, $nbrdsets);
+
+    close FILE;
+}
+
+sub writepairsfile {
+    my ($fh) = @_;
+    my (@ar_ar, @md);
+    my ($cont, $table, $round, $fmt, $column);
+
+    for $cont (0..$ncontpertable) {
+	# init two dimensional array
+	push (@ar_ar, [ 1 .. $total_rounds ]);
+    }
+
+    for $table (1..$total_tables) {
+	for $round (1..$total_rounds) {
+	    $datastr = $data_out{"$round:$table"};
+	    $datastr = $emptydata unless(defined($datastr));
+	    @md = split(/:/, $datastr);
+	    for $cont (0..$ncontpertable) {
+		$ar_ar[$cont][$round-1] = $md[$cont];
+	    }
+	}
+	$fmt = "(v)$total_rounds";
+	for $cont ($ncontpertable, @contindx) {
+		debug("pairsio", 0, "writing table $table, column $cont: @ar_ar");
+		$column = pack($fmt, @{$ar_ar[$cont]});
+		print $fh $column;
+	}
+    }
+}
+
+#
+# DBF file
+#
+# Format of line 1;  used as column separator
+# 
+# One (!)
+# Number of pairs
+# Name and description of movement
+# Number of tables
+# Number of rounds
+# Type of movement:
+#	1: Don't know. Maybe it's the individual movement again?
+#	2: Howell type, rankings can only be calculated after the tournament.
+#	3: Barometer Howell, rankings can be calculated after each round.
+#	4: Mitchell, separate rankings for N/S and E/W.
+#	5: Swiss.
+# Additional remarks
+# 1=score sheet remains at table, 2=score sheet travels with boards (if I understand him correctly)
+# Zero
+# 
+# Format of remaining lines; \244 used as column separator; | used as separator within a column
+# 
+# Round number
+# N/S at table 1, 2, etc.
+# Zeroes.
+# E/W at table 1, 2, etc.
+# More zeroes.
+# Board-set number at table 1, 2, etc.
+#
+
+sub read_dbf_file {
+    my ($filename) = @_;
+    my $maxboard = 0;
+
+    open ( FILE, "<$filename" ) || die $!;
+    binmode FILE;
+
+    my $header = read_data_line(FILE);
+    my ($one, $npairs, $descr, $ntables, $nrounds, $rest) = split /\244/, $header;
+    set_contest_type("P");
+
+    for my $r (1..$nrounds) {
+	my $line = read_data_line(FILE);
+	my ($rnd, $ns_pairs, $junk1, $ew_pairs, $junk2, $boards) = split /\244/, $line;
+	die "Ronde $r gemarkeerd als $rnd" if($r!=$rnd);
+	my @nsp = split /\|/, $ns_pairs;
+	my @ewp = split /\|/, $ew_pairs;
+	my @brds = split /\|/, $boards;
+	for my $t (0..$ntables-1) {
+	    my $b = $brds[$t];
+	    $maxboard = $b if ($b > $maxboard);
+	    enter_meeting($r, $t+1, $b, $nsp[$t], $ewp[$t]);
+	}
+    }
+    deelschema_klaar($ntables, $npairs, $nrounds, $maxboard);
+    close(FILE);
+}
+
+sub write_dbf_file {
+    my ($fh, $hash, $rh, $th, $ch, $bh) = @_;
+
+    my $header = join("\244", 1, $ch, "Description", $th, $rh, 2, "Made by manipulate", 1, 0);
+    print $fh "$header\r\n";
+    for my $r (1..$rh) {
+	my (@nsp, @j1, @ewp, @j2, @brds);
+	for my $t (1..$th) {
+	    my $datastr = $$hash{"$r:$t"};
+	    $datastr = $emptydata unless(defined($datastr));
+	    my @md = split(/:/, $datastr);
+	    push(@nsp, $md[0]);
+	    push(@j1, 0);
+	    push(@ewp, $md[1]);
+	    push(@j2, 0);
+	    push(@brds, $md[2]);
+	}
+	my $line = join("\244", $r,
+		join("|", @nsp), join("|", @j1),
+		join("|", @ewp), join("|", @j2),
+		join("|", @brds));
+	print $fh "$line\r\n";
+    }
+}
+
+sub write_numberlines_file {
+    my ($fh, $hash, $rh, $th, $ch, $bh) = @_;
+
+    print $fh "$rh\n$th\n1\n$ch\n";
+    for my $r (1..$rh) {
+	for my $t (1..$th) {
+	    my $datastr = $$hash{"$r:$t"};
+	    $datastr = $emptydata unless(defined($datastr));
+	    my @md = split(/:/, $datastr);
+	    print $fh "$md[0] $md[1] ";
+	}
+	print $fh "\n";
+    }
+}
+
+sub write_tabel_file {
+    my ($fh, $hash, $rh, $th, $ch, $bh) = @_;
+
+    print $fh join(",", ("Table", "Round", "NS", "EW", "Brdset")), "\n";
+    for my $r (1..$rh) {
+	for my $t (1..$th) {
+	    my $datastr = $$hash{"$r:$t"};
+	    next unless(defined($datastr));
+	    my @md = split(/:/, $datastr);
+	    print $fh join (",", ($t, $r, @md)), "\n";
+	}
+    }
+}
+
+#
+# Argument parsing
+#
+
+@main_ar = (
+    #
+    # Phases in order
+    #
+
+    #
+    # Internal stuff
+    #
+
+    "debug:MAIN_DEBUG:2:2",
+    "uictl:MAIN_UICTL:0:0",
+    "minmeeting:MAIN_MINMEETING:1:1",
+    "maxmeeting:MAIN_MAXMEETING:1:1",
+
+    #
+    # Input
+    #
+
+    "type:MAIN_TYPE:1:1",
+    "in:MAIN_IN:1:2",
+    "combine:MAIN_COMBINE:1:1",
+    "barometer:MAIN_BAROMETER:0:0",
+    "pairs:MAIN_PAIRS:1:1",
+    "generate:MAIN_GENERATE:2:10",
+    "matrix:MAIN_MATRIX:1:1",
+
+    #
+    # Extra rounds
+    #
+
+    "stanza:MAIN_STANZA:1:2",
+
+    #
+    # Extra tafel
+    #
+
+    "extratafel:MAIN_EXTRATAFEL:0:3",
+
+    #
+    # Draai
+    #
+
+    "draai:MAIN_DRAAI:0:2",
+
+    #
+    # Balans
+    #
+
+    "balans:MAIN_BALANS:0:1",
+
+    #
+    # Spelvast/spelervast/renumbering
+    #
+
+    "spelvast:MAIN_SPELVAST:0:2",
+    "spelervast:MAIN_SPELERVAST:2:2",
+    "usp:MAIN_USP:0:0",
+    "renumber:MAIN_RENUMBER:3:3",
+
+    #
+    # Kleiner maken
+    #
+
+    "curtail:MAIN_CURTAIL:1:1",
+    "leegweg:MAIN_LEEGWEG:0:0",
+    "krimp:MAIN_KRIMP:0:1",
+    "paarweg:MAIN_PAARWEG:2:2",
+
+    #
+    # Output
+    #
+
+    "split:MAIN_SPLIT:1:2",
+    "out:MAIN_OUT:1:2",
+);
+
+@type_ar = (
+    "pairs:TYPE_PAIRS:0:0",
+    "individual:TYPE_INDIVIDUAL:0:0",
+);
+
+@dir_ar = (
+    "horizontal:DIR_HORIZONTAL",
+    "vertical:DIR_VERTICAL"
+);
+
+@ren_ar = (
+    "contestant:REN_CONTESTANT",
+    "pair:REN_CONTESTANT",
+    "board:REN_BOARD",
+    "round:REN_ROUND",
+    "table:REN_TABLE",
+);
+
+#
+# Fix this later
+#
+#@io_ar = (
+#    "asc:IO_ASC",
+#    "pairs:IO_PAIRS",
+#    "dbf:IO_DBF",
+#    "tabel:IO_TABEL",
+#);
+
+sub initial_strm {
+    my ($table, $s, $args) = @_;
+    my ($save_ident);
+    my (@allstrings);
+
+    $s = "<leeg>" if ($s eq "");
+    my $slen = length $s;
+    for (@$table) {
+	my ($keyw, $ident, $minargs, $maxargs) = split /:/;
+	push @allstrings, $keyw;
+	my $ms = substr $keyw, 0, $slen;
+	debug("args", 9, "s=$s, ms=$ms");
+	if ($ms eq lc($s)) {
+	    die "$s is ambiguous" if(defined($save_ident));
+	    $minargs = 0 unless (defined($minargs));
+	    $maxargs = 1000000 unless (defined($maxargs));
+	    debug("args", 7, "keyw=$ident, args $minargs-$maxargs");
+	    die "$keyw needs at least $minargs args" if ($args < $minargs);
+	    die "$keyw needs at most $maxargs args" if ($args > $maxargs);
+	    $save_ident = $ident;
+	}
+    }
+    return $save_ident if (defined($save_ident));
+
+    my $possibilities = join ("\n", sort { $a cmp $b } @allstrings);
+    print STDERR "$s onbekend, mogelijkheden:\n$possibilities\n";
+    return "UNKNOWN";
+}
+
+sub handle_arg {
+    my (@args) = @_;
+    my ($argtype);
+
+    debug("args", 5, "handle args($#args) @args");
+    $argtype = initial_strm(\@main_ar, $args[0], $#args);
+    debug("args", 5, "arg $args[0], => ", $argtype);
+    given ($argtype) {
+
+	#
+	# Internal stuff
+	#
+
+	when (MAIN_DEBUG) {
+	    set_debug_level($args[1], must_be_number($args[2]));
+	}
+	when (MAIN_UICTL) {
+	    $uictl = 1;
+	}
+	when (MAIN_MINMEETING) {
+	    $min_meetings = must_be_number($args[1]);
+	}
+	when (MAIN_MAXMEETING) {
+	    $max_meetings = must_be_number($args[1]);
+	}
+
+	#
+	# Input
+	#
+
+	when (MAIN_TYPE) {
+	    my $type_type = initial_strm(\@type_ar, $args[1], $#args-1);
+	    given ($type_type) {
+		set_contest_type("P") when (TYPE_PAIRS);
+		set_contest_type("I") when (TYPE_INDIVIDUAL);
+		default {
+		    die "type $args[1] unknown";
+		}
+	    }
+	}
+	when (MAIN_IN) {
+	    my $filepattern = $args[1];
+	    my $pref = defined($args[2]) ? "$args[2]:" : "";
+	    push(@filelist, $pref . findfile($filepattern));
+	}
+	when (MAIN_COMBINE) {
+	    my $combine_arg = initial_strm(\@dir_ar, $args[1], $#args-1);
+	    given ($combine_arg) {
+		$combine_type = "horizontal" when (DIR_HORIZONTAL);
+		$combine_type = "vertical" when (DIR_VERTICAL);
+		default {
+		    die "combine type $args[1] unknown";
+		}
+	    }
+	}
+	when (MAIN_BAROMETER) {
+	    $make_barometer = 1;
+	}
+	when (MAIN_PAIRS) {
+	    push(@filelist, join(':', @args));
+	}
+	when (MAIN_GENERATE) {
+	    shift(@args);
+	    push(@filelist, join(':', @args));
+	}
+	when (MAIN_MATRIX) {
+	    $matrixfile = $args[1];
+	}
+	
+	#
+	# Extra rounds
+	#
+
+	when (MAIN_STANZA) {
+	    my $subarg = defined($args[2]) ? $args[2] : "";
+	    push(@x_stanza_rounds, must_be_number($args[1]) . ":$subarg");
+	}
+
+	#
+	# Extra tafel
+	#
+
+	when (MAIN_EXTRATAFEL) {
+	    $extratafel_aantal = defined($args[1]) ? must_be_number($args[1]) : 1;
+	    $extratafel_paarlijst = defined($args[2]) ? $args[2] : "";
+	    $extratafel_vlag = defined($args[3]) ? $args[3] : "";
+	}
+
+	#
+	# Draai
+	#
+
+	when (MAIN_DRAAI) {
+	    shift(@args);
+	    push(@draailist, join(':', @args));
+	}
+
+	#
+	# Balans
+	#
+
+	when (MAIN_BALANS) {
+	    $run_balans = 1;
+	    $balans_arg = $args[1];
+	}
+
+	#
+	# Spelvast/spelervast/renumbering
+	#
+
+	when (MAIN_SPELVAST) {
+	    $renumber_ops++;
+	    die "Spelvast maar 1 keer per aanroep" if ($spelvast);
+	    $spelvast++;
+	    $spelvast_tbls = $args[1];
+	    $spelvast_rnds = $args[2];
+	}
+	when (MAIN_SPELERVAST) {
+	    $renumber_ops++;
+	    die "Spelervast maar 1 keer per aanroep" if (defined($spelervast_cont));
+	    $spelervast_cont = $args[1];
+	    $spelervast_table = $args[2];
+	}
+	when (MAIN_USP) {
+	    $renumber_ops++ unless ($renumber_last_renumber);
+	    $renumber_last_renumber = 1;
+	    $ren_conts_from = "auto";
+	    $ren_conts_to = "auto";
+	    $ren_boards_from = "auto";
+	    $ren_boards_to = "auto";
+	}
+	when (MAIN_RENUMBER) {
+	    my ($renumber_type);
+
+	    $renumber_ops++ unless ($renumber_last_renumber);
+	    $renumber_last_renumber = 1;
+	    $renumber_type = initial_strm(\@ren_ar, $args[1], $#args-1);
+	    given ($renumber_type) {
+		when (REN_CONTESTANT) {
+		    $ren_conts_from = $args[2];
+		    $ren_conts_to = $args[3];
+		}
+		when (REN_BOARD) {
+		    $ren_boards_from = $args[2];
+		    $ren_boards_to = $args[3];
+		}
+		when (REN_ROUND) {
+		    $ren_rounds_from = $args[2];
+		    $ren_rounds_to = $args[3];
+		}
+		when (REN_TABLE) {
+		    $ren_tables_from = $args[2];
+		    $ren_tables_to = $args[3];
+		}
+		default {
+		    die "renumber type $args[1] unknown";
+		}
+	    }
+	}
+
+	#
+	# Kleiner
+	#
+
+	when (MAIN_CURTAIL) {
+	    $curtail_rounds = must_be_number($args[1]);
+	}
+	when (MAIN_LEEGWEG) {
+	    $leegweg = 1;
+	}
+	when (MAIN_KRIMP) {
+	    $krimp_tafels = defined($args[1]) ? must_be_number($args[1]) : 1;
+	}
+	when (MAIN_PAARWEG) {
+	    ($paarweg1, $paarweg2) = (@args[1..2]);
+	}
+
+	#
+	# Output
+	#
+
+	when (MAIN_SPLIT) {
+	    my $split_type = initial_strm(\@dir_ar, $args[1], $#args-1);
+	    $args[2] = "auto" unless (defined($args[2]));
+	    given ($split_type) {
+		$split_h = $args[2] when (DIR_HORIZONTAL);
+		$split_v = $args[2] when (DIR_VERTICAL);
+		default {
+		    die "split type $args[1] unknown";
+		}
+	    }
+	}
+	when (MAIN_OUT) {
+	    die "Slechts 1x out:" if ($outfile);
+	    $outfile = $args[1];
+	    $outfmt = $args[2];
+	    # Default output format is ASC
+	    if (!defined($outfmt)) {
+		my $suff = file_suffix($outfile);
+		$outfmt = defined($suff) ? $io_file_suffices{$suff} : "asc";
+		$outfmt = "asc" unless (defined($outfmt));
+	    }
+	}
+
+	#
+	# Anything else unknown
+	#
+
+	default {
+	    die "unknown arg $args[0]";
+	}
+    }
+}
+
+#
+# Code voor recepten
+# Lees ze in, en voer ze indien nodig uit
+#
+
+sub read_recepten() {
+    my ($target, $trtarget, $tlist, $dfactor);
+
+    open(RECEPT, "recepten") || return;
+    $target = "UNKNOWN";
+    while (<RECEPT>) {
+	chomp;
+	s/#.*//;		# Comment
+	next if ( /^\s*$/ );	# Empty line
+	if (/^\w/) {
+	    #
+	    # Check voor [Tlist], [Clist] of [Plist]
+	    #
+	    if (/\[([TCP])([DReo\-,0-9]+)\]/) {
+		debug("recept", 3, "$1 $2");
+		$tlist = $2;
+		$dfactor = $1 eq "T" ? 1 : 2;
+	    } else {
+		$tlist = 1;
+		$dfactor = 1;
+	    }
+	    $target = $_;
+	    for my $t (make_list($tlist, 1, 1000)) {
+		my $T = $t/$dfactor;
+		$trtarget = $target;
+		$trtarget =~ s/\[.*\]/$t/;
+		debug("recept", 4, "t=$t, target=$target, trtarget=$trtarget");
+		$refer_recept{$trtarget} = join(":", $T, $target);
+		debug("recept", 4, "refer{$target}: $refer_recept{$trtarget}");
+	    }
+	    next;
+	}
+	s/^\s*//;
+	$recept{$target} .= "$_\n";
+    }
+    for my $k (sort keys %recept) {
+	debug("recept", 6, "recept: $k");
+    }
+    for my $k (sort keys %refer_recept) {
+	debug("recept", 6, "refer_recept: $k");
+    }
+    close RECEPT;
+    my $nr = keys %recept;
+    my $nrr = keys %refer_recept;
+    debug("recept", 0, "Recepten: $nr, Schemaas: $nrr");
+}
+
+$recepten_ingelezen = 0;
+$recepten_folder = "recept";
+
+sub findfile {
+    my($fpat) = @_;
+    my($repat, @flist, $choice);
+    my $wsub = sub {
+	/$repat/i && push(@flist, $File::Find::name);
+    };
+
+    return $fpat if ($uictl);
+    debug("findfile", 3, "Pattern to find: $fpat");
+    #
+    # First convert file pattern to regular expression
+    # add \ before + and .
+    # * becomes .* and ? becomes .
+    # Anchor to begin and end
+    #
+
+    $repat = $fpat; 
+    $repat =~ s/([+.])/\\$1/g;
+    $repat =~ s/\*/.*/g;
+    $repat =~ s/\?/./g;
+    $repat = "^$repat\$";
+    debug("findfile", 3, "RE to find: $repat");
+
+    find($wsub, ".");
+
+    return undef unless(defined($flist[0]));
+
+    debug("findfile", 3, "Files found: " . join(' ', @flist));
+
+    #
+    # If only one match job is done
+    #
+    return $flist[0] unless $#flist;
+
+    do {
+	print "Patroon $fpat matcht meer dan 1 schema. Welke wil je?\n";
+	for my $indx (0..$#flist) {
+	    printf "%3d: %s\n", $indx+1, $flist[$indx];
+	}
+	print "Kies: ";
+	$choice = <STDIN>;
+	chomp $choice;
+	debug("findfile", 1, "Keuze is $choice");
+    } until ($choice > 0 && $choice <= $#flist+1);
+
+    return $flist[$choice-1];
+}
+
+sub isfile {
+    my ($arg) = @_;
+    my ($cmd, $pref, $suff);
+    my ($target, $T);
+    my (@tmpfil);
+
+    #
+    # If arg is existing file return 1
+    #
+
+    return $arg if -e $arg;
+
+    #
+    # If it contains / or \ stop now
+    #
+
+    return undef if ($arg =~ /\\/);
+    return undef if ($arg =~ /\//);
+
+    #
+    # Try to find the file somewhere in this directory
+    #
+
+    my $ffile = findfile($arg);
+    return $ffile if defined($ffile);
+
+    #
+    # Read recipes for making movements
+    # called here to enable a debug:recept arg to be handled first
+    #
+    unless ($recepten_ingelezen) {
+	read_recepten();
+	$recepten_ingelezen = 1;
+    }
+
+    #
+    # If no recipe for argument return undef
+    #
+
+    my $refer = $refer_recept{$arg};
+    return undef unless (defined($refer));
+    debug("recept", 2, "arg=$arg, refer=$refer");
+
+    #
+    # $refer contains list of $T and $target
+    #
+
+    ($T, $target) = split(/:/, $refer);
+    debug("recept", 2, "refer:$refer, T:$T, target:$target");
+
+    #
+    # Evaluate the recipe
+    #
+
+    my $rcpt = $recept{$target};
+    $arg = "$recepten_folder/$arg" if (-d $recepten_folder);
+
+    #
+    # Handle it line by line
+    #
+    for my $rcentry (split('\n', $rcpt)) {
+	#
+	# First do substitutions, all of them
+	#
+	while ($rcentry =~ /\[([^\]]*)\]/) {
+	    # Matched the first [whatever] in the line
+	    # $1 is set to whatever
+	    use integer;
+	    my $formula = $1;
+	    debug("recept", 3, "Found [$formula] in $rcentry");
+	    #
+	    # Evaluate formula
+	    # first replace the word T by $T
+	    # then replace C or P by (2*$T)
+	    #
+	    $formula =~ s/\bT\b/\$T/g;
+	    $formula =~ s/\b[CP]\b/(2*\$T)/g;
+	    #
+	    # Let perl evaluate formula
+	    #
+	    my $result = eval($formula);
+	    debug("recept", 4, "Formula now: $formula, result=$result");
+	    #
+	    # Now replace the [whatever] by the result
+	    #
+	    $rcentry =~ s/\[[^\]]*\]/$result/;
+	    debug("recept", 4, "rcentry now: $rcentry");
+	}
+
+	#
+	# Find all references to tempfiles and substitute
+	#
+	while ($rcentry =~ /\bTEMP(\d)\b/) {
+	    my $tmpno = $1;
+	    debug("recept", 3, "found TEMP $tmpno in $rcentry");
+	    $tmpfil[$tmpno] = "_Mtmp${tmpno}_$$"
+		unless (defined($tmpfil[$tmpno]));
+	    $rcentry =~ s/\bTEMP\d\b/$tmpfil[$tmpno]/;
+	    debug("recept", 4, "rcentry now: $rcentry");
+	}
+
+	#
+	# Make command:
+	# if manipulate prepend perl and add out: option if not already there
+	#
+	$pref = "";
+	$suff = "";
+	if ($rcentry =~ /^manipulate/) {
+	    $pref="perl ";
+	    $suff=" out:$arg" unless ($rcentry =~ /out:/);
+	}
+	$cmd="$pref$rcentry$suff";
+
+	#
+	# Now constructed command, so run it
+	#
+	debug("recept", 1, "execute $cmd");
+	my $rval = system $cmd;
+	if ($rval != 0) {
+	    debug("recept", 2, "rval=$rval, !=$!");
+	    die "Command: $cmd faalde";
+	}
+    }
+
+    #
+    # Remove all tempfiles used
+    #
+    for $f (@tmpfil) {
+	unlink $f if(defined($f));
+    }
+
+    #
+    # If we have not made what was asked for: trouble
+    #
+    die "Kon $arg niet maken" unless -e $arg;
+
+    return $arg;
+}
+
+#
+# read file switch code, handles various formats and generates
+#
+
+@gen_ar = (
+    "endlesshowell:GEN_ENDLESSHOWELL:1:2",
+    "mitchell:GEN_MITCHELL:1:2",
+    "web-mitchell:GEN_WEB_MITCHELL:2:2",
+    "s-mitchell:GEN_S_MITCHELL:1:2",
+    "dw-mitchell:GEN_DW_MITCHELL:1:1",
+    "expanded-mitchell:GEN_EMITCHELL:2:2",
+    "vasneg:GEN_VASNEG:3:3",
+    "null:GEN_NULL:1:1"
+);
+
+sub readfile {
+    my ($file) = @_;
+    my ($gentype, $ntables, @genargs);
+
+    if ($file =~ /:/) {
+
+	#
+	# : in filename, either pairs binary or generator
+	#
+	my @vals = split (/:/, $file);
+	if ($vals[0] eq "pairs") {
+	    #
+	    # Pairs binary, get clues from filename
+	    #
+	    if ($vals[1] =~ /^(.*\/)?(\d\d)....(\d\d)\....$/) {
+		readpairsfile($vals[1], $2+0, $3+0);
+	    } else {
+		die("Filename $vals[1] does not conform to Pairs 4.1 standards");
+	    }
+	    return;
+	}
+	if ($vals[0] eq "dbf") {
+	    read_dbf_file($vals[1]);
+	    return;
+	}
+	#
+	# Generator, first arg always number of tables
+	#
+	($gentype, $ntables, @genargs) = @vals;
+	debug("generate", 2, "gentype $gentype, ntables $ntables, @genargs");
+	$generator = initial_strm(\@gen_ar, $gentype, $#genargs+2);
+	given ($generator) {
+	    when (GEN_ENDLESSHOWELL) {
+	    	my $nmoving = defined($genargs[0]) ? $genargs[0] : 2*$ntables-1;
+	    	gen_endlesshowell($ntables, $nmoving);
+	    }
+	    when (GEN_MITCHELL) {
+	    	gen_mitchell(0, $ntables, @genargs);
+	    }
+	    when (GEN_WEB_MITCHELL) {
+	    	gen_web_mitchell($ntables, @genargs);
+	    }
+	    when (GEN_S_MITCHELL) {
+	    	gen_mitchell(1, $ntables, @genargs);
+	    }
+	    when (GEN_DW_MITCHELL) {
+	    	gen_dw_mitchell($ntables);
+	    }
+	    when (GEN_EMITCHELL) {
+	    	gen_emitchell($ntables, @genargs);
+	    }
+	    when (GEN_VASNEG) {
+	    	gen_vasneg($ntables, @genargs);
+	    }
+	    when (GEN_NULL) {
+	    	gen_null($ntables);
+	    }
+	    default {
+		die "Generator $gentype unknown";
+	    }
+	}
+	return;
+    }
+
+    #
+    # No : in name, so plain file, but what type?
+    #
+    my $suff = file_suffix($file);
+    if (defined($suff)) {
+    #if ($file =~ /\.(...)$/ ) {
+	#
+	# It has a suffix
+	#
+	$suff = $input_file_types{lc $suff};
+	if (defined($suff)) {
+	    debug("args", 7, "File $file, type $suff");
+	    if ($suff eq "gen") {
+		readgenfile($file);
+		return;
+	    }
+	    if ($suff eq "mvt") {
+		read_mvt_file($file);
+		return;
+	    }
+	    if ($suff eq "lcd") {
+		read_dbf_file($file);
+		return;
+	    }
+	}
+    }
+
+    #
+    # If all else fails treat as .ASC
+    #
+
+    readascfile($file);
+}
+
+#
+# Try to add extra rounds to the current movement
+#
+# Code to actually make movements
+#
+
+$xs_rounds=0;
+$xs_tables=0;
+$xs_pairs=0;
+
+$xs_maxtime = 60*60*24*365;
+
+@xs_meet = ();
+
+@xs_block = ();
+@xs_block_size = 0;
+$nblocks = 0;
+
+$xs_generated = 0;
+$xs_maxgen = 1;
+
+@xs_pir = ();
+@xs_pic = ();
+
+@xs_el_per_row = ();
+
+@one_col = ();
+@all_cols = ();
+@col_cnt = ();
+$nr_cols = 0;
+
+#
+# Make potential column
+# (a column is the set of positions where a certain boardset is played)
+#
+# Put column in array indexed by lowest pair. Easier to find.
+#
+
+sub make_col_recur {
+    my ($ix) = @_;
+
+    #
+    # Ix goes from 0..$xs_rounds-1
+    #
+
+    if ($ix >= $xs_rounds) {
+	#
+	# Finished one column
+	#
+	debug("stanza", 5, "Found column: @one_col");
+
+	#
+	# Put into array of lowest entry number
+	#
+
+	my $lowest = $one_col[0];
+
+	if ($lowest > 0 && @{$all_cols[$lowest-1]} == 0) {
+	    # warn("No use in continuing searching for columns, just found one for $lowest");
+	    $col_with_a_chance = 0;
+	    return 0;
+	}
+	push(@{$all_cols[$lowest]}, join(":", @one_col));
+	$nr_cols++;
+	debug("stanza", 4, "columns[$lowest] = @{$all_cols[$lowest]}");
+	$col_cnt[$_]++ for (@one_col);
+	return 1;
+    }
+    #
+    # Else, work to do
+    #
+
+    my $epr = $xs_el_per_row[$ix];
+
+    # debugstat("stanza", 1, "make_col_recur($ix, xs_el_per_row=$epr, pair_in_col=@xs_pic)");
+
+    if ($epr == 0) {
+	#
+	# No column entry from this row
+	# So just call ourselves for the next row
+	#
+	return make_col_recur($ix+1);
+    }
+
+    #
+    # Here, more intelligently:
+    # Check tables not ruled out yet.
+    # Make combinatorial of these tables, not all tables
+    # Then they can be done one in a row, without further checking
+    #
+    my(@pos_tables);
+
+    for my $entry ($ix*$xs_tables..$ix*$xs_tables+$xs_tables-1) {
+	my ($nsp, $ewp) = split(/:/, $xs_block[$entry]);
+	#
+	# If any pair on this table is already in column, forget the table
+	#
+	next if ($xs_pic[$nsp]);
+	next if ($xs_pic[$ewp]);
+	push(@pos_tables, $entry);
+    }
+    # debug("stanza", 6, "ix=$ix, pos_tables=@pos_tables");
+    #
+    # Not enough available tables
+    #
+    return 0 if (@pos_tables < $epr);
+    #
+    # Now start making all combinatorials and go into recursion
+    #
+    for my $cb (combinatorial(scalar(@pos_tables), $epr)) {
+	my(@prs, @cbar);
+
+	#
+	# cb is one combinatorial
+	#
+	@cbar = split /:/, $cb;
+	#
+	# cbar is array of indices into pos_tables
+	#
+
+	for my $cbentry (@cbar) {
+	    #
+	    # Replace number by real index into block
+	    # Collect all pairs in those block entries
+	    #
+	    $cbentry = $pos_tables[$cbentry];
+	    push(@prs, split(/:/, $xs_block[$cbentry]));
+	}
+
+	#
+	# At this point perhaps reject entries if right "loaning" tables
+	# are not present
+	#
+	if (@xs_leners>0) {
+	    my $leners = 0;
+	    for my $l (@xs_leners) {
+		for my $p (@prs) {
+		    $leners++ if ($p == $l);
+		}
+	    }
+	    if (@cbar == 1 && $leners != 0 || @cbar > 1 && $leners != 1) {
+		# debug("stanza", 1, "Leners(@prs): $leners");
+		next;
+	    }
+	}
+
+	my $one_col_size = $#one_col;
+	push(@one_col, @cbar);
+	@xs_pic[@prs] = @xs_ones;
+
+	make_col_recur($ix+1);
+
+	@xs_pic[@prs] = @xs_zeroes;
+	$#one_col = $one_col_size;
+
+	return 0 unless($col_with_a_chance);
+    }
+}
+
+sub clear_columns {
+
+    for my $p (0..$xs_block_size-1) {
+	$all_cols[$p] = [];
+    }
+    @col_cnt = @xs_zeroes;
+    $nr_cols = 0;
+}
+
+sub show_columns {
+
+    return if ($nr_cols == 0);
+    for my $p (0..$xs_block_size-1) {
+	my @this_col = @{$all_cols[$p]};
+	next if (@this_col == 0);
+	debug("stanza", 2, "col[$p] = @this_col");
+    }
+}
+
+sub make_columns {
+    my ($leen) = @_;
+
+    debug("stanza", 6, "make_columns blk=@xs_block, leen=@$leen");
+
+    for my $l (@$leen) {
+	use integer;
+	@xs_pic = (0) x ($xs_pairs+1);
+	@xs_el_per_row = ($xs_tables/$xs_rounds) x ($xs_rounds);
+	for my $lel (split(/:/, $l)) {
+	    $xs_el_per_row[$lel]++;
+	}
+	debug("stanza", 3, "l=$l, xs_el_per_row=@xs_el_per_row");
+	$col_with_a_chance = 1;
+	make_col_recur(0);
+	debug("stanza", 2, "Leen $l, aantal kolommen is $nr_cols");
+    }
+}
+
+#
+# Code to cover block with columns
+#
+
+@xs_block_cover = ();
+@cover_cols = ();
+
+sub try_col_recur {
+    my ($colno) = @_;
+
+    if ($colno >= $xs_rounds) {
+	#
+	# Finished! We have completed the whole movement
+	#
+	debug("stanza", 0, "Completely done");
+	return 1;
+    }
+
+    debug("stanza", 2, "try_col_recur($colno), cover=@xs_block_cover");
+    #
+    # Search lowest uncovered block entry
+    # Recursively try all columns there
+    #
+    my $entry = 0;
+    while ($entry < $xs_block_size && $xs_block_cover[$entry] != 0) {
+	debug("stanza", 2, "entry=$entry");
+	$entry++;
+    }
+    die "Entry runover" if ($entry >= $xs_block_size);
+
+    COLUMN:
+    for my $col (@{$all_cols[$entry]}) {
+	# debug("stanza", 3, "try_col_recur($colno), lowest=$entry, try column $col");
+	my @ent_in_col = split(/:/, $col);
+	#
+	# If all cover entries are zero try it, else next
+	#
+
+	next COLUMN if grep $_, @xs_block_cover[@ent_in_col];
+	# for (@xs_block_cover[@ent_in_col]) { next COLUMN if ($_); }
+
+	#
+	# Set cover entries to 1, and recurse
+	#
+	$cover_cols[$colno] = $col;
+	@xs_block_cover[@ent_in_col] = @xs_ones;
+	my $res = try_col_recur($colno+1);
+	@xs_block_cover[@ent_in_col] = @xs_zeroes;
+	return 1 if ($res);
+    }
+    return 0;
+}
+
+sub process_block {
+    use integer;
+    debug("stanza", 2, "Block(size $#xs_block): @xs_block");
+
+    #
+    # At this point try boards
+    # return 1 if it works, 0 otherwise
+    #
+
+    my @leen = combinatorial($xs_rounds, $xs_tables%$xs_rounds);
+    if ($#leen < 0) {
+	# Geen lenen
+	$leen[0] = "";
+    }
+    debug("stanza", 2, "Leen= '@leen'");
+
+    log_time("stanza", "Voor kolommen maken");
+    clear_columns();
+    make_columns(\@leen);
+    show_columns();
+    account_time("fase 2: kolommen maken");
+
+    log_time("stanza", "Na kolommen maken");
+
+    my $debugpenalty = 1;
+    $debugpenalty = 0 if ($nblocks%100 == 0);
+    $debugpenalty = 0 if ($nblocks < 100 && $nblocks%10 == 0);
+    $debugpenalty = 0 if ($nblocks < 10);
+    debug("stanza", 1+$debugpenalty, "Block $nblocks, columns $nr_cols");
+
+    #
+    # If we haven't even enough columns to cover block
+    # try some other blocks
+    #
+    return 0 if ($nr_cols < $xs_rounds);
+
+    my @sortcnt = sort { $a <=> $b } @col_cnt;
+    debug("stanza", 2, "col_cnt=@col_cnt\nsortcnt=@sortcnt");
+    if ($sortcnt[0] == 0) {
+	# At least one entry not coverable
+	# debug("stanza", 0, "Threw out columns($nr_cols)");
+	return 0;
+    }
+
+    debug("stanza", 0, "Block $nblocks, columns $nr_cols, cnt: @sortcnt[0..4] ... @sortcnt[-5..-1]");
+
+    #
+    # Or if the columns are no good
+    #
+    @xs_block_cover = @xs_zeroes;
+    my $res = try_col_recur(0);
+    account_time("fase 3: kolommen passen");
+    return 0 if ($res == 0);
+
+    debug("stanza", 0, "Cover: @cover_cols");
+
+    #
+    # Enter generated movement
+    #
+
+    $xs_generated++;
+    switch_to_vertical();
+
+    for my $brd (1..$xs_rounds) {
+	my $col = $cover_cols[$brd-1];
+	my @colentries = split(/:/, $col);
+	for my $e (@colentries) {
+	    use integer;
+	    ($ns, $ew) = split(/:/, $xs_block[$e]);
+	    my $r = $e/$xs_tables + 1;
+	    my $t = $e%$xs_tables + 1;
+	    enter_meeting($r,$t, $brd, $ns, $ew);
+	}
+    }
+    deelschema_klaar($xs_tables, $xs_pairs, $xs_rounds, $xs_rounds);
+
+    return $xs_generated >= $xs_maxgen;
+}
+
+#
+# Make block
+#
+
+sub make_block {
+    my ($entry) = @_;
+    my ($round);
+
+    {
+	use integer;
+	$round = $entry/$total_tables+1;
+    }
+    debugstat("stanza", 2, "entry $entry/$xs_block_size, round = $round");
+    if ($entry >= $xs_block_size) {
+	debug("stanza", 6, "Stop: gemaakt: @xs_block");
+	$nblocks++;
+	debugstat("stanza", 1, "Nblocks: $nblocks");
+	account_time("fase 1: block");
+	return process_block();
+    }
+
+    my $nsp = 1;
+    $nsp++ while($xs_pir[$nsp] >= $round);
+    #
+    # Now $nsp is lowest pair not yet in this round
+    #
+    $xs_pir[$nsp]++;
+    my $ewp = $nsp;
+
+    #
+    # Voor NZ paar 1, alleen OW paren hoger dan in de vorige ronde
+    # nog uitzoeken
+    #
+
+    for my $allow_ewp (@{$xs_meet[$nsp]}) {
+	$ewp++;
+	next unless ($allow_ewp);
+	next unless ($xs_pir[$ewp] < $round);
+
+	$allow_ewp = 0;
+	$xs_pir[$ewp]++;
+	debug("stanza", 6, "Enter ($nsp, $ewp) in entry $entry");
+	$xs_block[$entry] = "$nsp:$ewp";
+
+	my $res = make_block($entry+1);
+	return $res if ($res);
+
+	$xs_pir[$ewp]--;
+	$allow_ewp = 1;
+    }
+    $xs_pir[$nsp]--;
+
+    return 0;
+}
+
+sub extra_stanza {
+    my ($xarg) = @_;
+
+    set_contest_type("P");
+    my $even_oneven = 0;
+
+    my ($xrnds, $xoption) = split(/:/, $xarg);
+    $xs_rounds = $xrnds;
+    $xs_tables = $total_tables;
+    $xs_pairs = 2*$total_tables;
+    $xs_block_size = $xs_rounds*$xs_tables;
+    debug("stanza", 0, "Extra rounds: $xs_rounds, on $xs_tables tables, option $xoption");
+    @xs_ones = (1) x $xs_block_size;
+    @xs_zeroes = (0) x $xs_block_size;
+
+    for (split /,/, $xoption) {
+    	if (/oe/) {
+	    $even_oneven = 1;
+	}
+	if (/^L/) {
+	    s/^L//;
+	    @xs_leners = split (/\+/, $_);
+	    debug("stanza", 0, "Leners: @xs_leners");
+	}
+	if (/^O/) {
+	    s/^O//;
+	    $ontmoetingen_file = $_;
+	    debug("stanza", 0, "Ontmoetingen van file: $ontmoetingen_file");
+	}
+	if (/^M/) {
+	    s/^M//;
+	    $xs_maxgen = $_;
+	}
+	if (/^T/) {
+	    s/^T//;
+	    $xs_maxtime = $_;
+	}
+    }
+
+    for my $p (1..$xs_pairs) {
+	$xs_meet[$p] = [];
+	@{$xs_meet[$p]}[0..$xs_pairs-$p-1] = @xs_zeroes;
+    }
+    if (defined($ontmoetingen_file)) {
+	open ONTM, $ontmoetingen_file || die;
+	my $ontm = join("", <ONTM>);
+	close ONTM;
+	my @o = split(" ", $ontm);
+	while (@o > 1) {
+	    my $p = shift(@o);
+	    my $op = shift(@o);
+	    ($p, $op) = ($op, $p) if ($op < $p);
+	    ${$xs_meet[$p]}[$op-$p-1] = 1;
+	}
+    } else {
+	for my $p (1..$total_conts) {
+	    for my $op ($p+1..$total_conts) {
+		next if ($xoption =~ /oe/ && $p%2 == $op%2);
+		my $nm = $how_often_opps{"$p:$op"};
+		if (!defined($nm) || $nm < $max_meetings) {
+		    ${$xs_meet[$p]}[$op-$p-1] = 1;
+		}
+	    }
+	}
+    }
+
+    for my $p (1..$total_conts) {
+	debug("stanza", 1, "Opps for pair $p: @{$xs_meet[$p]}");
+    }
+
+    #
+    # Check here feasibility? How many pairings per pair, what blocksize, etc...
+    #
+    # die "Niet genoeg mogelijke ontmoetingen ", scalar(@pairings), " tov blokgrootte $xs_block_size" if (@pairings < $xs_block_size);
+    #
+
+    @xs_pir = @xs_zeroes[0..$total_conts];
+
+    my $res = make_block(0);
+
+    if ($xs_generated && $xs_maxgen > 1) {
+	debug("stanza", 0, "$xs_generated schemaas gemaakt bij een maximum van $xs_maxgen");
+	return;
+    }
+
+    die "Stanza lukt niet" if ($res == 0);
+}
+
+#
+# Auto split, look at boards/contestants
+#
+
+sub auto_split {
+    my ($vertical) = @_;
+    my (@matrix, @sizes);
+
+    debug("autosplit", 0, "Autosplit " . $vertical ? "vertical" : "horizontal");
+    if ($vertical) {
+	$highi1 = $total_rounds;
+	$highi2 = $total_tables;
+	@nindex = ($ncontpertable);
+    } else {
+	$highi1 = $total_tables;
+	$highi2 = $total_rounds;
+	@nindex = @contindx;
+    }
+    for my $i1 (1..$highi1) {
+	my (@list);
+	for my $i2 (1..$highi2) {
+	    my $index = $vertical ? "$i1:$i2" : "$i2:$i1";
+	    my $val = $data_out{$index};
+	    next unless (defined($val));
+	    debug("autosplit", 8, "index=$index, val=$val");
+	    my @vals = split(/:/, $val);
+	    for my $v (@vals[@nindex]) {
+		push(@list, $v) unless (grep {$_ eq $v} @list);
+	    }
+	}
+	debug("autosplit", 2, "Index i1=$i1, list=@list");
+	$matrix[$i1] = join(",", @list);
+    }
+    debug("autosplit", 1, "Matrix:\n" . join("\n", @matrix[1..$highi1]));
+
+    #
+    # Now we have the lists
+    # From the beginning, keep joining lists until no other list intersects
+    # Then we have a disjunct piece of movement
+    #
+
+    my $lowi1 = 1;
+    my $listsdone=0;
+    while ($listsdone < $highi1) {
+	my ($matches);
+
+	$i = $lowi1;
+	do {
+	    for my $v (split(/,/, $matrix[$i])) {
+		push(@comblist, $v) unless (grep {$_ eq $v} @comblist);
+	    }
+	    debug("autosplit", 2, "i=$i, comblist=@comblist");
+	    $matches = 0;
+	    for my $nv (split(/,/, join(",", @matrix[$i+1..$highi1]))) {
+		$matches++ if (grep {$_ eq $nv} @comblist);
+	    }
+	    debug("autosplit", 3, "Matches $matches");
+	    $i++;
+	} until($matches == 0);
+	push(@sizes, $i-$lowi1);
+	$lowi1 = $i;
+	$listsdone = $i-1;
+	debug("autosplit", 1, "listsdone: $listsdone, sizes: @sizes");
+    }
+
+    return join(",", @sizes);
+}
+
+# Begin of INTERACTIVE code
+
+
+@ia_ar = (
+    "draai:IA_DRAAI:0:0",
+    "lees:IA_LEES:0:0",
+    "schema:IA_SCHEMA:0:0",
+);
+
+sub prompt_and_read {
+    my ($level, $prompt) = @_;
+
+    print "  " x $level, $prompt, ": ";
+    my $res = <stdin>;
+    chomp $res;
+    debug("interactive", 9, "read $res");
+    return $res;
+}
+
+sub print_status {
+    my ($seq) = @_;
+
+    print "Schema $seq: P=$total_conts\n";
+    write_asc_file(STDOUT, \%data_in, $total_rounds, $total_tables, $total_conts, $total_brdsets);
+}
+
+sub save_status {
+    my $sa;
+
+    $sa = {};
+    %$sa = %data_in;
+    
+    my $line = join(':',  ($type_UPI, $total_tables, $total_conts, $total_rounds, $total_brdsets, $sa));
+    debug("interactive", 6, "sa[1:1] = ", $$sa{"1:1"});
+    return $line;
+}
+
+sub restore_status {
+    my ($line) = @_;
+    my $sa;
+    
+    die "Niet bekend schema nummer" unless (defined($line));
+    ($type_UPI, $total_tables, $total_conts, $total_rounds, $total_brdsets, $sa) = split(/:/, $line);
+    debug("interactive", 7, "sa=$sa");
+    debug("interactive", 6, "sa[1:1] = ", $$sa{"1:1"});
+    %data_in = %$sa;
+}
+
+sub interactive {
+    my $prompt = "m";
+    my $seq = 0;
+    my $end = 0;
+    my %save_hash;
+
+    do {
+	my $modified = 0;
+	$cmd = prompt_and_read(0, $prompt);
+	my $argtype = initial_strm(\@ia_ar, $cmd, 0);
+	debug("interactive", 5, "cmd $cmd, => ", $argtype);
+	eval {
+	    given ($argtype) {
+		when (IA_LEES) {
+		    my $file;
+		    do {
+			my $filename = prompt_and_read(1, "file");
+			debug("interactive", 5, "file = $filename");
+			$file = findfile($filename);
+		    } until (defined($file));
+		    schema_start();
+		    readfile($file);
+		    schema_klaar();
+		    $modified=1;
+		}
+		when (IA_DRAAI) {
+		    my $rnds = prompt_and_read(1, "ronde(s)");
+		    my $conts = prompt_and_read(2, "deelnemer(s)");
+		    $conts = undef if ($conts eq "");
+		    do_draai(\%data_in, $rnds, $conts);
+		    $modified = 1;
+		}
+		when (IA_SCHEMA) {
+		    my $schema_seq = prompt_and_read(1, "schema");
+		    restore_status($save_hash{$schema_seq});
+		    $modified = 1;
+		}
+	    }
+	};
+	unless ($@ eq "") {
+	    print "Error '$@' occurred\n";
+	}
+	if ($modified) {
+	    $seq++;
+	    print_status($seq);
+	    $save_hash{$seq} = save_status();
+	    debug("interactive", 3, $seq, " ", $save_hash{$seq});
+	}
+    } until ($end);
+}
+
+# End of INTERACTIVE code
+
+#
+# Start of main
+#
+
+$spelvast = 0;
+
+$outfile="";
+$outfmt = "asc";
+
+$matrixfile="";
+
+$ren_conts_from = "";
+$ren_conts_to = "";
+$ren_boards_from = "";
+$ren_boards_to = "";
+$ren_rounds_from = "";
+$ren_rounds_to = "";
+$ren_tables_from = "";
+$ren_tables_to = "";
+
+schema_start();
+
+#
+# First handle option arguments, save files for later
+#
+
+$#filelist = -1;
+for $arg (@ARGV) {
+    @this_arg = split(/:/, $arg);
+
+    #
+    # If no colon(:) and arg exists as file treat it as file
+    #
+    if ($#this_arg == 0) {
+	my $f = isfile($arg);
+	if (defined($f)) {
+	    # No colons and existing file
+	    # File could have been made as a side effect of the isfile() function
+	    push(@filelist, $f);
+	    next;
+	}
+    }
+
+    #
+    # So this is not a file
+    #
+    handle_arg(@this_arg);
+    debug("args", 1, "Handled @this_arg");
+}
+
+die "Spelvast/Spelervast/USP en renumber niet tegelijk mogeljk"
+    if ($renumber_ops > 1);
+
+if ($#filelist == 0 && $#draailist<0 && !$run_balans) {
+    # Slechts 1 invoer file en geen draai commando's
+    # Doe zelf wat voor de hand liggende draaiingen
+
+    $auto_draai = 1;
+} else {
+    $auto_draai = 0;
+}
+
+#
+# Interactive?
+#
+
+if ($uictl == 0 && $#filelist < 0) {
+    print "No files, go interactive\n";
+    interactive();
+    exit(0);
+}
+
+#
+# Start reading files
+#
+readfile($_) for (@filelist);
+
+#
+# Any extra rounds to make?
+#
+
+for (@x_stanza_rounds) {
+    extra_stanza($_);
+}
+
+#
+# Finished entering movements
+#
+
+schema_klaar();
+
+#
+# Add tables on request
+#
+
+if ($extratafel_aantal > 0) {
+    my $tc = $total_conts;
+    for (1..$extratafel_aantal) {
+	do_extratafel($extratafel_paarlijst, $tc, $extratafel_vlag);
+    }
+}
+
+#
+# Draai
+#
+
+do_draai(\%data_in, split(/:/, $dcmd)) while ($dcmd = shift(@draailist));
+
+#
+# Balans
+#
+
+do_balans(\%data_in, $balans_arg) if ($run_balans);
+
+#
+# Move data_in to data_out, doing renumbering manipulations here
+#
+
+if ($spelvast) {
+    do_spelvast(\%data_in, \%data_out, $spelvast_tbls, $spelvast_rnds);
+} elsif ($spelervast_cont) {
+    do_spelervast(\%data_in, \%data_out, $spelervast_cont, $spelervast_table);
+} else {
+    # Other renumbering
+
+    #
+    # Special case for contestant standard start position
+    #
+
+    if ($ren_conts_from =~ /^a/ ) {
+	# Auto mode
+	die "Auto renumbering in this movement($total_tables tables, $total_conts contestants) not possible"
+	    if ($total_tables * $ncontpertable != $total_conts);
+	$ren_conts_from = "";
+	for my $table (1..$total_tables) {
+	    my @cont = split(/:/, $data_in{"1:$table"});
+	    $ren_conts_from .= "$cont[$_]," for (@contindx);
+	}
+	debug("renumber", 0, "Auto contestants from: $ren_conts_from");
+    }
+    if ($ren_conts_to =~ /^a/ ) {
+	$ren_conts_to = "1-$total_conts";
+    }
+
+    #
+    # Auto renumbering boards
+    # What to do when multiple copies are played? USP will probably fail,
+    # but the code is not yet right.
+    #
+
+    if ($ren_boards_from =~ /^a/ ) {
+	# Auto mode
+	my @brd_done = (0) x ($total_brdsets+1);
+	$ren_boards_from = "";
+	for my $table (1..$total_tables) {
+	    my @cont = split(/:/, $data_in{"1:$table"});
+	    $ren_boards_from .= "$cont[$ncontpertable],";
+	    $brd_done[$cont[$ncontpertable]] = 1;
+	}
+	my $sum = 0;
+	$sum += $brd_done[$_] for (1..$total_brdsets);
+	if ($sum != $total_tables) {
+	    $ren_boards_from = "";
+	} else {
+	    for my $b (1..$total_brdsets) {
+		$ren_boards_from .= "$b," unless ($brd_done[$b]);
+	    }
+	}
+	debug("renumber", 0, "Auto contestants from: $ren_conts_from");
+    }
+    if ($ren_boards_to =~ /^a/ ) {
+	$ren_boards_to = $ren_boards_from eq "" ? "" : "1-$total_brdsets";
+    }
+
+    do_renumber(\%data_in, \%data_out,
+	$ren_conts_from, $ren_conts_to,
+	$ren_boards_from, $ren_boards_to,
+	$ren_rounds_from, $ren_rounds_to,
+	$ren_tables_from, $ren_tables_to);
+}
+
+
+#
+# Phase to make movement smaller
+#
+
+if ($curtail_rounds) {
+    die "bad curtail arg $curtail_rounds, total_rounds is $total_rounds"
+	if ($curtail_rounds >= $total_rounds);
+    $total_rounds = $curtail_rounds;
+}
+
+for (1..$krimp_tafels) {
+    do_krimp();
+}
+
+if (defined($paarweg1)) {
+    do_paarweg($paarweg1, $paarweg2);
+}
+
+# On request squeeze out empty tables
+
+do_leegweg(\%data_out) if ($leegweg);
+
+# Are the last tables empty always, if so remove
+
+do_check_empty(\%data_out);
+
+report_accounting();
+
+#
+# Splitting and output phase
+#
+
+# Pairs 4.1 output is special
+
+if ($outfmt eq "pairs") {
+    die "No splitting with pairs4.1 output" if ("$split_h$split_v" ne "");
+    die "no outfile" if ($outfile eq "");
+
+    if ($outfile =~ /^(\d\d)....(\d\d)\....$/) {
+	if ($1 != $total_conts) {
+	    warn("First two characters of filename != number of pairs");
+	}
+	if ($2 != $total_rounds) {
+	    warn("Last two characters of filename != number of rounds");
+	}
+    } else {
+	warn("Filename does not conform to Pairs 4.1 standards");
+    }
+    $outfh = \* OUTFH;
+    open ($outfh, "> $outfile") || die $!;
+    binmode $outfh;
+    writepairsfile($outfh);
+    close $outfh;
+    exit 0;
+}
+
+#
+# Figure out the write subroutine
+#
+$ioft = $io_file_types{$outfmt};
+die "Onbekend formaat $outfmt" unless (defined($ioft));
+die "Geen uitvoer mogelijk voor $outfmt" unless ($ioft =~ /o/);
+$printroutine = "write_${outfmt}_file";
+
+#
+# Split and write out the file
+#
+
+if ($split_h =~ /^a/) {
+    # Auto split
+    die "Automatische splits alleen in 1 richting" unless ($split_v eq "");
+    $split_h = auto_split(0);
+}
+
+if ($split_v =~ /^a/) {
+    # Auto split
+    die "Automatische splits alleen in 1 richting" unless ($split_h eq "");
+    $split_v = auto_split(1);
+}
+
+$split_h = $total_tables if ($split_h eq "");
+$split_v = $total_rounds if ($split_v eq "");
+
+debug("split", 0, "Split: horizontal($split_h) and vertical($split_v)");
+
+# Total of split numbers must be equal to grand total
+check_split($split_h, $total_tables);
+check_split($split_v, $total_rounds);
+
+$low_rnd = 1;
+for my $vsize (split /,/, $split_v) {
+    $high_rnd = $low_rnd + $vsize -1;
+    $low_tbl = 1;
+    for my $hsize (split /,/, $split_h) {
+	my (%cont_hash, %brd_hash);
+	my (@brd_trlat, @cont_trlat);
+	my (%data_split);
+
+	$high_tbl = $low_tbl + $hsize - 1;
+    	debug("split", 0, "rnd $low_rnd-$high_rnd, tbl $low_tbl-$high_tbl");
+	inspect_part(\%data_out, $low_rnd, $high_rnd,
+	    $low_tbl, $high_tbl, \%cont_hash, \%brd_hash);
+	check_absence_boards(\%data_out,
+	    join (':', (1..$low_rnd-1, $high_rnd+1..$total_rounds)),
+	    \%brd_hash);
+	check_absence_conts(\%data_out,
+	    join(':', ($low_rnd..$high_rnd)),
+	    join(":", (1..$low_tbl-1, $high_tbl+1..$total_tables)),
+	    \%cont_hash);
+
+	#
+	# Renumber boards in split down to 1..nboards
+	#
+	$brd_insplit = keys(%brd_hash);
+	@brd_trlat = (0) x ($total_brdsets+1);
+	@brd_trlat[sort { $a <=> $b } keys(%brd_hash)] = (1..$brd_insplit);
+	debug("split", 1, "brd_trlat = @brd_trlat");
+	
+	#
+	# Renumber contestants in split down to 1..nconts
+	#
+	$cont_insplit = keys(%cont_hash);
+	@cont_trlat = (0) x ($total_conts+1);
+	@cont_trlat[sort { $a <=> $b } keys(%cont_hash)] = (1..$cont_insplit);
+	debug("split", 1, "cont_trlat = @cont_trlat");
+	
+	#
+	# Copy data_out array (in part) to data_split
+	# doing all actual renumbering
+	#
+	for my $r ($low_rnd..$high_rnd) {
+	    for my $t ($low_tbl..$high_tbl) {
+		my $h = $data_out{"$r:$t"};
+		next if (!defined($h));
+		my @v = split /:/, $h;
+
+		$v[$_] = $cont_trlat[$v[$_]] for (@contindx);
+		$v[$ncontpertable] = $brd_trlat[$v[$ncontpertable]];
+
+		my $nr = $r - $low_rnd + 1;
+		my $nt = $t - $low_tbl + 1;
+		$data_split{"$nr:$nt"} = join(':', @v);
+	    }
+	}
+
+	if ($outfile ne "") {
+	    #
+	    # Change filename in case of split
+	    # add -r and/or -t parts
+	    #
+	    my $ses_outfile = $outfile;
+	    my $infix = "";
+	    if ($low_rnd != 1 || $high_rnd != $total_rounds) {
+	    	$infix .= "-r$low_rnd-$high_rnd";
+	    }
+	    if ($low_tbl != 1 || $high_tbl != $total_tables) {
+	    	$infix .= "-t$low_tbl-$high_tbl";
+	    }
+
+	    if ($ses_outfile =~ /\./) {
+		# Filename has suffix
+		$ses_outfile =~ s/\./$infix./;
+	    } else {
+		$ses_outfile .= $infix;
+	    }
+
+	    debug("filenames", 0, "about to open $ses_outfile");
+	    $outfh = \*OUTFH;
+	    open ($outfh, "> $ses_outfile") || die $!;
+	} else {
+	    $outfh = STDOUT;
+	}
+
+	binmode $outfh;
+	&$printroutine($outfh, \%data_split,
+	    $high_rnd - $low_rnd + 1,
+	    $high_tbl - $low_tbl +1,
+	    $cont_insplit, $brd_insplit);
+
+	# Close file, unless STDOUT
+	close $outfh unless $outfile eq "";
+
+	$low_tbl = $high_tbl + 1;
+    }
+    $low_rnd = $high_rnd + 1;
+}
+
+#
+# Dump symbol table of main::
+# to check for missing local declarations
+#
+if (0) {
+    no strict 'refs';
+
+    open(SYMS, ">globalsyms") || die;
+    foreach my $entry ( keys %main:: ) {
+	print SYMS "$entry\n";
+    }
+    close (SYMS);
+}
