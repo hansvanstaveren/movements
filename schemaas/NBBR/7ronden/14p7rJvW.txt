@@ -1,0 +1,13 @@
+14  7  7  7 0
+ 1- 2 A  3- 4 B  5- 6 C  7- 8 D  9-10 E 11-12 F 13-14 G 
+ 3-13 A  2- 5 B  7- 4 C 10- 6 D 11- 8 E 14- 9 F  1-12 G 
+12- 4 A  6- 1 B  3- 8 C  5- 9 D  7-14 E 10-13 F  2-11 G 
+ 5-11 A 12- 7 B  9- 2 C 14- 4 D  6-13 E  1- 8 F  3-10 G 
+10- 7 A  8-13 B 14- 1 C 11- 3 D 12- 5 E  6- 2 F  9- 4 G 
+ 9- 6 A 14-10 B 13-11 C  2-12 D  1- 4 E  3- 7 F  5- 8 G 
+ 8-14 A  9-11 B 12-10 C  1-13 D  3- 2 E  5- 4 F  7- 6 G 
+
+Qf=70.51, Qo=53.85
+
+Joop van Wijk 2008.
+Speciaal bedoeld voor competities in meerdere zittingen

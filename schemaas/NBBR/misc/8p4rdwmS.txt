@@ -1,0 +1,31 @@
+ 8  4  4  4 0
+   1   2 A   3   4 B   5   6 C   7   8 D
+   7   6 A   5   8 B   3   2 C   1   4 D
+   8   3 A   1   6 B   7   4 C   5   2 D
+   5   4 A   2   7 B   1   8 C   3   6 D
+
+Qf=68.75
+
+Vernummeringschema voor 7 zittingen:
+
+session1: p1 p2 p3 p4 p5 p6 p7 p8
+session2: p8 p4 p3 p7 p1 p5 p2 p6
+session3: p5 p6 p3 p7 p8 p1 p4 p2
+session4: p5 p3 p2 p7 p1 p8 p4 p6
+session5: p6 p2 p8 p4 p5 p3 p1 p7
+session6: p7 p3 p8 p1 p5 p6 p2 p4
+session7: p6 p4 p5 p8 p3 p1 p2 p7
+
+Geef ieder paar een vast nummer p1 .. p8.
+Gebruik steeds hetzelfde schema
+Paar p1 bijvoorbeeld krijgt in zitting 1 loopbriefje 1,
+in zitting 2 loopbriefje 5, in zitting 3 loopbriefje 6.
+
+Kwaliteitsfactor na 
+session 1 : Qo = 57.14,  Qc = 64.29
+session 2 : Qo = 76.19,  Qc = 85.71
+session 3 : Qo = 85.71,  Qc = 96.43
+session 4 : Qo = 91.43,  Qc = 97.96
+session 5 : Qo = 95.24,  Qc = 97.40
+session 6 : Qo = 97.96,  Qc = 98.48
+session 7 : Qo = 100.00, Qc = 100.00

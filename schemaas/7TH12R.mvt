@@ -1,0 +1,104 @@
+0000	"7TH12R reduced"	11	"This movement is an extension of the Hesitation Mitchell. The number of tables is always even and the number of rounds (and the number of sets of ","boards) is equal to two more than the number of tables, 9 in this case.",,"The movement is set up as a normal Mitchell, with one set of boards on each table. The only exception is the insertion of two relay tables (with one set of ","boards on each) placed after table 4 and another elsewhere. The movement is along standard Mitchell principles, E-W up one table and boards down ","one table, not forgetting the relay tables. ",,"The only complication is in the movement of the E-W pairs, for when they have played as E-W at the highest numbered table, they firstly play at table 2 ","as N-S and then they play as N-S at the highest table before moving to E-W at table one for the next round."	7	12	1	3	0	14	12	Movements - a fair approach	61	3	2.1293	36	0	0	
+0001	1	"N-S remain stationary"		"E-W go to E-W table 3"		
+0002	2	"N-S go to E-W table 6"		"E-W go to N-S table 5"		
+0003	3	"N-S go to E-W table 4"		"E-W to N-S this table"		
+0004	4	"N-S go to E-W table 7"		"E-W go to E-W table 5"		
+0005	5	"N-S go to N-S table 2"		"E-W go to N-S table 6"		
+0006	6	"N-S go to E-W table 2"		"E-W go to N-S table 4"		
+0007	7	"N-S remain stationary"		"E-W go to E-W table 1"		
+0100	1	7	
+0101	1	1	13	1	1	F	
+0102	1	2	5	7	2	F	
+0103	1	3	11	12	3	F	
+0104	1	4	3	10	4	F	
+0105	1	5	6	9	5	F	
+0106	1	6	8	4	6	F	
+0107	1	7	14	2	7	F	
+0200	2	7	
+0201	2	1	13	2	2	F	
+0202	2	2	6	8	3	F	
+0203	2	3	12	1	4	F	
+0204	2	4	4	11	5	F	
+0205	2	5	7	10	6	F	
+0206	2	6	9	5	7	F	
+0207	2	7	14	3	8	F	
+0300	3	7	
+0301	3	1	13	3	3	F	
+0302	3	2	7	9	4	F	
+0303	3	3	1	2	5	F	
+0304	3	4	5	12	6	F	
+0305	3	5	8	11	7	F	
+0306	3	6	10	6	8	F	
+0307	3	7	14	4	9	F	
+0400	4	7	
+0401	4	1	13	4	4	F	
+0402	4	2	8	10	5	F	
+0403	4	3	2	3	6	F	
+0404	4	4	6	1	7	F	
+0405	4	5	9	12	8	F	
+0406	4	6	11	7	9	F	
+0407	4	7	14	5	10	F	
+0500	5	7	
+0501	5	1	13	5	5	F	
+0502	5	2	9	11	6	F	
+0503	5	3	3	4	7	F	
+0504	5	4	7	2	8	F	
+0505	5	5	10	1	9	F	
+0506	5	6	12	8	10	F	
+0507	5	7	14	6	11	F	
+0600	6	7	
+0601	6	1	13	6	6	F	
+0602	6	2	10	12	7	F	
+0603	6	3	4	5	8	F	
+0604	6	4	8	3	9	F	
+0605	6	5	11	2	10	F	
+0606	6	6	1	9	11	F	
+0607	6	7	14	7	12	F	
+0700	7	7	
+0701	7	1	13	7	7	F	
+0702	7	2	11	1	8	F	
+0703	7	3	5	6	9	F	
+0704	7	4	9	4	10	F	
+0705	7	5	12	3	11	F	
+0706	7	6	2	10	12	F	
+0707	7	7	14	8	1	F	
+0800	8	7	
+0801	8	1	13	8	8	F	
+0802	8	2	12	2	9	F	
+0803	8	3	6	7	10	F	
+0804	8	4	10	5	11	F	
+0805	8	5	1	4	12	F	
+0806	8	6	3	11	1	F	
+0807	8	7	14	9	2	F	
+0900	9	7	
+0901	9	1	13	9	9	F	
+0902	9	2	1	3	10	F	
+0903	9	3	7	8	11	F	
+0904	9	4	11	6	12	F	
+0905	9	5	2	5	1	F	
+0906	9	6	4	12	2	F	
+0907	9	7	14	10	3	F	
+1000	10	7	
+1001	10	1	13	10	10	F	
+1002	10	2	2	4	11	F	
+1003	10	3	8	9	12	F	
+1004	10	4	12	7	1	F	
+1005	10	5	3	6	2	F	
+1006	10	6	5	1	3	F	
+1007	10	7	14	11	4	F	
+1100	11	7	
+1101	11	1	13	11	11	F	
+1102	11	2	3	5	12	F	
+1103	11	3	9	10	1	F	
+1104	11	4	1	8	2	F	
+1105	11	5	4	7	3	F	
+1106	11	6	6	2	4	F	
+1107	11	7	14	12	5	F	
+1200	12	7	
+1201	12	1	13	12	12	F	
+1202	12	2	4	6	1	F	
+1203	12	3	10	11	2	F	
+1204	12	4	2	9	3	F	
+1205	12	5	5	8	4	F	
+1206	12	6	7	3	5	F	
+1207	12	7	14	1	6	F	

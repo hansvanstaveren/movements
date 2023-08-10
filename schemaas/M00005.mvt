@@ -1,0 +1,110 @@
+0000	"10T 9R"	20	"This is based on the double Howell. The second Howell's pair numbers have the number of pairs in the first movement added to their number. Hence all pair ","numbers are unique.",,"There are as many sets of boards in a Howell movement as there are pairs minus one (equal to the number of rounds). There are only as many sets in play as ","there are tables (using a standard Howell with no shares). There are some (the number of table minus one) sets of boards not in play on each round.",,"A second Howell movement is placed on this set of boards, using the boards out of play in the first Howell, then only 1 table needs to share boards to allow 2 ","Howell movements of the same number of tables using the same boards.",,"This movement is valuable in a two-session event where the field is divided into 2 groups of pairs and in the first session a Mitchell movement is used so that the ","two groups meet each other. In the second session the interwoven Howell is used so that each group meets the pairs in its group."	10	9	1	3	0	20	9	Movements - a fair approach	161	3	9.9999	36	0	0	
+0001	1	"N-S remain stationary"		"E-W go to N-S table 2"		
+0002	2	"N-S to E-W this table"		"E-W go to N-S table 9"		
+0003	3	"N-S go to E-W table 9"		"E-W go to N-S table 10"		
+0004	4	"N-S go to N-S table 6"		"E-W go to E-W table 5"		
+0005	5	"N-S go to N-S table 8"		"E-W go to N-S table 7"		
+0006	6	"N-S go to E-W table 8"		"E-W remain stationary"		
+0007	7	"N-S to E-W this table"		"E-W go to N-S table 4"		
+0008	8	"N-S go to E-W table 4"		"E-W go to N-S table 5"		
+0009	9	"N-S go to E-W table 3"		"E-W go to E-W table 10"		
+0010	10	"N-S go to N-S table 3"		"E-W go to E-W table 1"		
+0100	1	10	
+0101	1	1	10	1	1	F	
+0102	1	2	9	8	2	F	
+0103	1	3	4	6	3	F	
+0104	1	4	12	16	4	F	
+0105	1	5	18	15	5	F	
+0106	1	6	11	20	6	F	
+0107	1	7	14	13	7	F	
+0108	1	8	17	19	8	F	
+0109	1	9	7	3	8	F	
+0110	1	10	5	2	9	F	
+0200	2	10	
+0201	2	1	10	2	2	F	
+0202	2	2	1	9	3	F	
+0203	2	3	5	7	4	F	
+0204	2	4	13	17	5	F	
+0205	2	5	19	16	6	F	
+0206	2	6	12	20	7	F	
+0207	2	7	15	14	8	F	
+0208	2	8	18	11	9	F	
+0209	2	9	8	4	9	F	
+0210	2	10	6	3	1	F	
+0300	3	10	
+0301	3	1	10	3	3	F	
+0302	3	2	2	1	4	F	
+0303	3	3	6	8	5	F	
+0304	3	4	14	18	6	F	
+0305	3	5	11	17	7	F	
+0306	3	6	13	20	8	F	
+0307	3	7	16	15	9	F	
+0308	3	8	19	12	1	F	
+0309	3	9	9	5	1	F	
+0310	3	10	7	4	2	F	
+0400	4	10	
+0401	4	1	10	4	4	F	
+0402	4	2	3	2	5	F	
+0403	4	3	7	9	6	F	
+0404	4	4	15	19	7	F	
+0405	4	5	12	18	8	F	
+0406	4	6	14	20	9	F	
+0407	4	7	17	16	1	F	
+0408	4	8	11	13	2	F	
+0409	4	9	1	6	2	F	
+0410	4	10	8	5	3	F	
+0500	5	10	
+0501	5	1	10	5	5	F	
+0502	5	2	4	3	6	F	
+0503	5	3	8	1	7	F	
+0504	5	4	16	11	8	F	
+0505	5	5	13	19	9	F	
+0506	5	6	15	20	1	F	
+0507	5	7	18	17	2	F	
+0508	5	8	12	14	3	F	
+0509	5	9	2	7	3	F	
+0510	5	10	9	6	4	F	
+0600	6	10	
+0601	6	1	10	6	6	F	
+0602	6	2	5	4	7	F	
+0603	6	3	9	2	8	F	
+0604	6	4	17	12	9	F	
+0605	6	5	14	11	1	F	
+0606	6	6	16	20	2	F	
+0607	6	7	19	18	3	F	
+0608	6	8	13	15	4	F	
+0609	6	9	3	8	4	F	
+0610	6	10	1	7	5	F	
+0700	7	10	
+0701	7	1	10	7	7	F	
+0702	7	2	6	5	8	F	
+0703	7	3	1	3	9	F	
+0704	7	4	18	13	1	F	
+0705	7	5	15	12	2	F	
+0706	7	6	17	20	3	F	
+0707	7	7	11	19	4	F	
+0708	7	8	14	16	5	F	
+0709	7	9	4	9	5	F	
+0710	7	10	2	8	6	F	
+0800	8	10	
+0801	8	1	10	8	8	F	
+0802	8	2	7	6	9	F	
+0803	8	3	2	4	1	F	
+0804	8	4	19	14	2	F	
+0805	8	5	16	13	3	F	
+0806	8	6	18	20	4	F	
+0807	8	7	12	11	5	F	
+0808	8	8	15	17	6	F	
+0809	8	9	5	1	6	F	
+0810	8	10	3	9	7	F	
+0900	9	10	
+0901	9	1	10	9	9	F	
+0902	9	2	8	7	1	F	
+0903	9	3	3	5	2	F	
+0904	9	4	11	15	3	F	
+0905	9	5	17	14	4	F	
+0906	9	6	19	20	5	F	
+0907	9	7	13	12	6	F	
+0908	9	8	16	18	7	F	
+0909	9	9	6	2	7	F	
+0910	9	10	4	1	8	F	

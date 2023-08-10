@@ -1,0 +1,48 @@
+0000	"3 Tables 11 Rounds - 11 or 12 Players - 22 Boards"	30	"You must use personal or table guide cards to conduct this movement. Distribute the boards as shown on the table guide cards. Place the board sets not in play on relay tables between the real tables.",,"After each round, each player (except the highest numbered player 12) moves to the spot vacated by the player with the number immediately below their own.",,"The boards also move in a very orderly fashion, moving to the next lower numbered table, except where there is a relay table, when the boards are placed there. Sometimes two (or more) tables share boards.",	3	11	1	2	1	12	11	EBU Manual	171	0	9.9999	36	0	0	
+0001	1	"North to West at table 3"	"South to South at table 2"	"East to North at table 3"	"West to West at table 2"	
+0002	2	"North remain stationary"	"South to South at table 3"	"East to East at table 3"	"West to East this table"	
+0003	3	"North to West at table 1"	"South to North at table 1"	"East to South at table 1"	"West to East at table 1"	
+0100	1	3	
+0101	1	1	1002	806	1	F	
+0102	1	2	1201	405	2	F	
+0103	1	3	711	309	3	F	
+0200	2	3	
+0201	2	1	1103	907	2	F	
+0202	2	2	1202	506	3	F	
+0203	2	3	801	410	4	F	
+0300	3	3	
+0301	3	1	104	1008	3	F	
+0302	3	2	1203	607	4	F	
+0303	3	3	902	511	5	F	
+0400	4	3	
+0401	4	1	205	1109	4	F	
+0402	4	2	1204	708	5	F	
+0403	4	3	1003	601	6	F	
+0500	5	3	
+0501	5	1	306	110	5	F	
+0502	5	2	1205	809	6	F	
+0503	5	3	1104	702	7	F	
+0600	6	3	
+0601	6	1	407	211	6	F	
+0602	6	2	1206	910	7	F	
+0603	6	3	105	803	8	F	
+0700	7	3	
+0701	7	1	508	301	7	F	
+0702	7	2	1207	1011	8	F	
+0703	7	3	206	904	9	F	
+0800	8	3	
+0801	8	1	609	402	8	F	
+0802	8	2	1208	1101	9	F	
+0803	8	3	307	1005	10	F	
+0900	9	3	
+0901	9	1	710	503	9	F	
+0902	9	2	1209	102	10	F	
+0903	9	3	408	1106	11	F	
+1000	10	3	
+1001	10	1	811	604	10	F	
+1002	10	2	1210	203	11	F	
+1003	10	3	509	107	1	F	
+1100	11	3	
+1101	11	1	901	705	11	F	
+1102	11	2	1211	304	1	F	
+1103	11	3	610	208	2	F	
