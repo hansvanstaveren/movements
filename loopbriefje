@@ -1,0 +1,39 @@
+#!/usr/bin/perl -w
+
+($file, $pair, $brdsperset) = @ARGV;
+
+print "file=$file, pair=$pair, brdsperset=$brdsperset\n";
+
+open FILE, $file || die;
+
+$hdr = <FILE>;
+
+($npairs, $ntables, $nrounds, $nbrdsets, $pi) = split(' ', $hdr);
+die "Paar $ pair onbekend" if ($pair < 1 || $pair > $npairs);
+
+die "Geen individueel" if ($pi);
+
+for my $r (1..$nrounds) {
+    $line = <FILE>;
+    @lc = split(' ', $line);
+    for my $t (1..$ntables) {
+	$ns = shift(@lc);
+	$ew = shift(@lc);
+	$bd = shift(@lc);
+	if ($bd =~ /^[A-Z]$/) {
+	    # Alphabetical, change to number internally
+	    $bd = ord($bd) - ord('A') +1;
+	}
+	die "Boardset $bd klopt niet" if ($bd < 1 || $bd > $nbrdsets);
+	if ($ns == $pair) {
+	    $dir = "NS"; $opp=$ew;
+	} elsif ($ew == $pair) {
+	    $dir = "EW"; $opp = $ns;
+	} else {
+	    next;
+	}
+	$lowbrd = ($bd-1)*$brdsperset+1;
+	$highbrd = $bd*$brdsperset;
+	print "round $r, table $t, dir $dir, opp $opp, brds $lowbrd-$highbrd\n";
+    }
+}

@@ -1,0 +1,118 @@
+#
+# Wat voorbeelden
+#
+
+vrkrhw-[T9-13]-8.asc
+    manipulate ihwll-9.gen extra:[T-9] spelvast:[T] balans leegweg
+
+#
+# Fair Barometer Mitchell, first half NS stationary, second half EW
+#
+fairmitchell[T3-70].asc
+    manipulate gen:mit:[T] barometer split:v:[T/2],[(T+1)/2] out:_fm
+    manipulate _fm-r[T/2+1]-[T] spelervast:[T+1]-[2*T]:[T/2+1]-[T],1-[T/2] out:_fm_second
+    manipulate comb:v _fm-r1-[T/2] _fm_second
+
+#
+# Interwoven Endless Howell, two groups, odd number of tables
+#
+iehwll[To5-35].asc
+    manipulate gen:end:[T/2+1] gen:end:[T/2+1] ren:tab:1-[T/2+1]:[T/2+1]-1 paarweg:[T+1]:[2*T+2] leegweg
+
+#
+# Combinaties (Interwoven) Howell en Mitchell, voor internationale finales
+#
+# even en oneven tafels
+#
+hwll2x[T2-30]+mit.asc
+    manipulate gen:end:[T] gen:end:[T] out:TEMP1
+    manipulate comb:v TEMP1 fairmitchell[2*T].asc balans:-s5000
+
+ihwll[To5-35]+mit.asc
+    manipulate fairmitchell[T].asc ren:round:1-[T]:[T],1-[T-1] curtail:[T-1] out:TEMP1
+    manipulate comb:v iehwll[T].asc TEMP1 balans:-s5000
+
+iihwll[T4D0R8-60]+mits.asc
+    manipulate hwll2x[T/4]+mit.asc hwll2x[T/4]+mit.asc out:TEMP2
+    manipulate comb:v TEMP2 fairmitchell[T].asc balans
+
+iihwll[T4D1R9-61]+mits.asc
+    manipulate fairmitchell[T].asc ren:round:1-[T]:[T],1-[T-1] curtail:[T-1] out:TEMP1
+    manipulate ihwll[T/2+1]+mit.asc ihwll[T/2+1]+mit.asc paarweg:[T+1]:[2*T+2] leegweg out:TEMP2
+    manipulate comb:v TEMP2 TEMP1 balans
+
+iihwll[T4D2R10-62]+mits.asc
+    manipulate fairmitchell[T].asc out:TEMP1
+    manipulate ihwll[T/2]+mit.asc ihwll[T/2]+mit.asc out:TEMP2
+    manipulate comb:v TEMP2 TEMP1 balans
+
+iihwll[T4D3R11-63]+mits.asc
+    manipulate fairmitchell[T].asc ren:round:1-[T]:[T],1-[T-1] curtail:[T-1] out:TEMP1
+    manipulate hwll2x[T/4+1]+mit.asc hwll2x[T/4+1]+mit.asc paarweg:[T+1]:[2*T+2] leegweg out:TEMP2
+    manipulate comb:v TEMP2 TEMP1 balans
+
+#
+# 4 times Howell-6 "interwoven"
+i4hwll-12.asc
+    manipulate gen:end:3 out:TEMP1
+    manipulate TEMP1 ren:bo:1-5:2-5,1 out:TEMP2
+    manipulate TEMP1 ren:bo:1-5:3-5,1-2 out:TEMP3
+    manipulate TEMP1 ren:bo:1-5:4-5,1-3 out:TEMP4
+    manipulate comb:h TEMP1 TEMP2 TEMP3 TEMP4
+#
+#
+
+mit4+[T1-3].asc
+    manipulate gen:dw-mitchell:4 extra:[T]:1-4
+
+mit6+[T1-5].asc
+    manipulate gen:mit:6 extra:[T]
+
+mit9+[T1-8].asc
+    manipulate gen:mit:9 extra:[T]
+
+mit10+[T1-9].asc
+    manipulate gen:mit:10 extra:[T]
+
+mit12+[T1-10].asc
+    manipulate gen:dw-mitchell:12 extra:[T]
+
+drmi-[T7-10]-7.asc
+    manipulate gen:mit:7 extra:[T-7] balans: out:drmi-[T]-7.asc
+
+mit2x[Te2-20].asc
+    manipulate gen:mit:[T] ren:bo:1-[T]:[T/2+1]-[T],1-[T/2] out:TEMP1
+    manipulate gen:mit:[T] TEMP1 spelvast:[2*T]
+
+mit2x4+[T1-7].asc
+    manipulate mit2x4.asc extra:[T]:1-4,9-12
+
+mit2x6+[T1-10].asc
+    manipulate mit2x6.asc extra:[T]:1-6,13-18
+
+mit2x10+[T1-8].asc
+    manipulate mit2x10.asc extra:[T]:1-10,21-30
+
+schev[Pe16-32]-8-1.asc
+    manipulate schev16.csv extra:[T-8]:o1-16:1
+
+schev[Pe16-32]-8-X.asc
+    manipulate schev16.csv extra:[T-8]:o1-16
+
+schev[Pe20-38]-10.asc
+    manipulate schev20.csv extra:[T-10]::1
+
+ch[Ce24-40]-11.asc
+    manipulate gen:vasn:[T]:11:1 balans: usp:
+
+ch[C14-16]-12.asc
+    manipulate rhwll-[T]-12.gen balans: usp:
+
+ch[C18-22]-12.asc
+    manipulate gen:ex:[T]:12 balans: usp:
+
+ch[Ce24-42]-12.asc
+    manipulate schev24.csv extra:[T-12]::1 balans: usp:
+
+ch[C44,46]-12.asc
+    manipulate schev24.csv gen:ex:[T-12]:12 balans: usp:
