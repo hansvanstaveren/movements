@@ -11,8 +11,8 @@
 # Handle various IO types better
 #
 
-no warnings "experimental::smartmatch";
-use feature "switch";
+# no warnings "experimental::smartmatch";
+use experimental "switch";
 use File::Find;
 
 # Under control of User Interface?
