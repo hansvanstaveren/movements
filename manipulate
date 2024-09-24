@@ -11,9 +11,37 @@
 # Handle various IO types better
 #
 
-# no warnings "experimental::smartmatch";
+no warnings "experimental::smartmatch";
 use experimental "switch";
 use File::Find;
+use Config;
+
+$balansbin = "./balans.linux";
+$balans_kan = 1;
+
+sub set_balansbin {
+    #
+    # Linux or Windows?
+    #
+
+    $os = $Config{'osname'};
+
+    #
+    # Call balans and parse and proces diagnostic output
+    # The generated file by balans is *not used
+    #
+
+    unless ($os =~ /linux/) {
+	$balansbin = "./balans.exe";
+    }
+
+    # print "Balansbin determined to be $balansbin\n";
+
+    unless (-e $balansbin) {
+    	print "$balansbin niet gevonden!!\nbalans optie zal niet werken.\n";
+	$balans_kan = 0;
+    }
+}
 
 # Under control of User Interface?
 $uictl = 0;
@@ -1229,13 +1257,9 @@ sub do_balans {
     write_asc_file($outfh, $hash, $total_rounds, $total_tables, $total_conts, $total_brdsets);
     close $outfh;
 
-    #
-    # Call balans and parse and proces diagnostic output
-    # The generated file by balans is *not used
-    #
 
     my $ndraai = 0;
-    open($cmdfh, "./balans $argstr|") || die;
+    open($cmdfh, "$balansbin $argstr|") || die;
     while (<$cmdfh>) {
 	chomp;
 	debug("balans", 8, $_);
@@ -2804,8 +2828,10 @@ sub handle_arg {
 	#
 
 	when (MAIN_BALANS) {
-	    $run_balans = 1;
-	    $balans_arg = $args[1];
+	    if ($balans_kan) {
+		$run_balans = 1;
+		$balans_arg = $args[1];
+	    }
 	}
 
 	#
@@ -3933,6 +3959,7 @@ $ren_tables_from = "";
 $ren_tables_to = "";
 
 schema_start();
+set_balansbin();
 
 #
 # First handle option arguments, save files for later

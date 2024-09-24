@@ -56,7 +56,8 @@ sub execute {
 
     print "Execute: $command\n";
     $command = "perl " . $command if ($command =~ /^manipulate /);
-    $command = "PATH=.:\$PATH;$command";
+    # $command = "PATH=.:\$PATH;$command";
+    print "cmdline=$command\n";
     system $command;
 }
 
@@ -282,7 +283,10 @@ for $ses (1..$sessions) {
     if ($spelvast) {
 	my $newtemp = "_mtrn_sv$ses";
 	my $tbls = $pairs/2;
-	execute("manipulate $sestemp spelvast:$tbls out:$newtemp");
+	# my $svcmd = "manipulate $sestemp spelvast:$tbls out:$newtemp";
+	my $svcmd = "manipulate $sestemp spelvast out:$newtemp";
+	print "Spelvast: $svcmd\n";
+	execute($svcmd);
 	$sestemp = $newtemp;
     }
     $allses .= "$sestemp ";
