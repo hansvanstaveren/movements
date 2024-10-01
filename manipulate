@@ -11,7 +11,7 @@
 # Handle various IO types better
 #
 
-no warnings "experimental::smartmatch";
+# no warnings "experimental::smartmatch";
 use experimental "switch";
 use File::Find;
 use Config;
@@ -316,25 +316,23 @@ $ncontpertable = 0;	# 2 for pairs, 4 for individual
 sub set_contest_type {
     my ($t) = @_;
 
-    given ("$type_UPI$t") {
-	return when("II");
-	return when("PP");
-	when ("UI") {
+    print "pairs/individual set($type_UPI $t)\n";
+    return if ($type_UPI eq $t);
+    if ($type_UPI eq "U") {
+	if ($t eq "I") {
 	    $type_UPI = "I";
 	    $ncontpertable = 4;
 	    @draaiindx = (2,3, 0,1, 4);
 	    $emptydata = "0:0:0:0:0";
 	    $max_meetings=2 unless (defined($max_meetings));
-	}
-	when ("UP") {
+	} elsif ($t eq "P") {
 	    $type_UPI = "P";
 	    $ncontpertable = 2;
 	    @draaiindx = (1, 0, 2);
 	    $emptydata = "0:0:0";
 	    $max_meetings=1 unless (defined($max_meetings));
-	}
-	default {
-	    die "pairs/individual mixup";
+	} else {
+	    die "pairs/individual mis-set";
 	}
     }
     $ncontperside = $ncontpertable/2;
@@ -1756,56 +1754,52 @@ sub gen_emitchell {
     debug("generate", 4, "Expanded Mitchell, $ntables tafels, $nrounds rondes");
     debug("generate", 4, "Expanded Mitchell, $npairs paren, $nstat zitters");
 
-    given ($nrounds-$ntables) {
-	when (1) {
-	    # One round expansion
-	    $arrow_switch_rounds = $em1_arrowswitch{$ntables};
-	    die "Verkeerd aantal tafels" unless (defined($arrow_switch_rounds));
+    my $xrnds = $nrounds - $ntables;
+    if ($xrnds == 1) {
+	# One round expansion
+	$arrow_switch_rounds = $em1_arrowswitch{$ntables};
+	die "Verkeerd aantal tafels" unless (defined($arrow_switch_rounds));
 
-	    my $boardtable = int $ntables/2;
+	my $boardtable = int $ntables/2;
 
-	    @ns = (1..$ntables);
-	    @ew = ($ntables+1..2*$ntables);
-	    @brd = (1..$boardtable, $boardtable+3-($ntables%2)..$ntables+1, 1);
-	}
-	when (2) {
-	    # Two round expansion
-	    $arrow_switch_rounds = $em2_arrowswitch{$ntables};
-	    die "Verkeerd aantal tafels" unless (defined($arrow_switch_rounds));
+	@ns = (1..$ntables);
+	@ew = ($ntables+1..2*$ntables);
+	@brd = (1..$boardtable, $boardtable+3-($ntables%2)..$ntables+1, 1);
+    } elsif ($xrnds == 2) {
+	# Two round expansion
+	$arrow_switch_rounds = $em2_arrowswitch{$ntables};
+	die "Verkeerd aantal tafels" unless (defined($arrow_switch_rounds));
 
-	    if ($ntables%2==1) {
-		# Odd table Mitchell
-		my $basetables = $ntables-3;
-		my $boardtable = int $basetables/2;
-		@ns = (1..$basetables, $npairs-1, $basetables+1, $npairs);
-		@ew = ($ntables-1..$ntables+$basetables-2, $npairs-4..$npairs-2);
-		@brd = (1..$boardtable, $boardtable+3..$nrounds);
-	    } else {
-		# Even table Mitchell
-		my $pivot = int $nrounds/2;
-		@ns = (1..$pivot-1, $ntables+$pivot-1, $pivot..$ntables-3, $npairs, $ntables-2);
-		@ew = ($ntables-1..$ntables+$pivot-2, $ntables+$pivot..2*$ntables-1);
-		@brd = (1..$ntables-1, $nrounds);
-	    }
-	}
-	when (3) {
-	    # Three round expansion
-	    $arrow_switch_rounds = $em3_arrowswitch{$ntables};
-	    die "Verkeerd aantal tafels" unless (defined($arrow_switch_rounds));
+	if ($ntables%2==1) {
+	    # Odd table Mitchell
 	    my $basetables = $ntables-3;
-	    @ns = (1..$basetables, $npairs-1, $npairs-3, $npairs);
-	    @ew = ($basetables+1..2*$basetables, $npairs-5, $npairs-4, $npairs-2);
 	    my $boardtable = int $basetables/2;
-	    @brd[0..$boardtable-1] = (1..$boardtable);
-	    if ($basetables%2==0) {
-		@brd[$boardtable..$ntables-1] = ($boardtable+4..$ntables+3);
-	    } else {
-		@brd[$boardtable..$ntables-1] = ($boardtable+3..$ntables+1, $nrounds);
-	    }
+	    @ns = (1..$basetables, $npairs-1, $basetables+1, $npairs);
+	    @ew = ($ntables-1..$ntables+$basetables-2, $npairs-4..$npairs-2);
+	    @brd = (1..$boardtable, $boardtable+3..$nrounds);
+	} else {
+	    # Even table Mitchell
+	    my $pivot = int $nrounds/2;
+	    @ns = (1..$pivot-1, $ntables+$pivot-1, $pivot..$ntables-3, $npairs, $ntables-2);
+	    @ew = ($ntables-1..$ntables+$pivot-2, $ntables+$pivot..2*$ntables-1);
+	    @brd = (1..$ntables-1, $nrounds);
 	}
-	default {
-	    die "Expanded mitchell $ntables tafels, $nrounds rondes kan niet";
+    } elsif ($xrnds == 3) {
+	# Three round expansion
+	$arrow_switch_rounds = $em3_arrowswitch{$ntables};
+	die "Verkeerd aantal tafels" unless (defined($arrow_switch_rounds));
+	my $basetables = $ntables-3;
+	@ns = (1..$basetables, $npairs-1, $npairs-3, $npairs);
+	@ew = ($basetables+1..2*$basetables, $npairs-5, $npairs-4, $npairs-2);
+	my $boardtable = int $basetables/2;
+	@brd[0..$boardtable-1] = (1..$boardtable);
+	if ($basetables%2==0) {
+	    @brd[$boardtable..$ntables-1] = ($boardtable+4..$ntables+3);
+	} else {
+	    @brd[$boardtable..$ntables-1] = ($boardtable+3..$ntables+1, $nrounds);
 	}
+    } else {
+	die "Expanded mitchell $ntables tafels, $nrounds rondes kan niet";
     }
 
     handle_arg("draai", $arrow_switch_rounds, "1-$nstat") if ($auto_draai);
@@ -1926,26 +1920,20 @@ sub readgenfile {
 	# First line determines what it looks like
 	#
 	if ($ntables == 0) {
-	    given ($nfields) {
-		when (2) {
-		    set_contest_type("P");
-		    $barometer = 1;
-		}
-		when (3) {
-		    set_contest_type("P");
-		    $barometer = 0;
-		}
-		when (4) {
-		    set_contest_type("I");
-		    $barometer = 1;
-		}
-		when (5) {
-		    set_contest_type("I");
-		    $barometer = 0;
-		}
-		default {
-		    die "$nfields fields unrecognized";
-		}
+	    if ($nfields == 2) {
+		set_contest_type("P");
+		$barometer = 1;
+	    } elsif ($nfields == 3) {
+		set_contest_type("P");
+		$barometer = 0;
+	    } elsif ($nfields == 4) {
+		set_contest_type("I");
+		$barometer = 1;
+	    } elsif ($nfields == 5) {
+		set_contest_type("I");
+		$barometer = 0;
+	    } else {
+		die "$nfields fields unrecognized";
 	    }
 	    $nfields_save = $nfields;
 	} else {
@@ -2038,24 +2026,18 @@ sub readgenfile {
 
     $prev_cont_flag = "X";
     for ($c = $ncont; $c > 0; $c--) {
-	given ("$prev_cont_flag$contflags[$c]") {
-	    when (/[X_ ]_/) {
-	    }
-	    when (/[X_ ]\./) {
-		unshift(@mv_end, $c);
-	    }
-	    when (/[X_ ];/) {
-	    	unshift(@st_end, $c);
-	    }
-	    when (/[X_] /) {
-		$contflags[$c] = ".";
-		unshift(@mv_end, $c);
-	    }
-	    when (/[;. ] /) {
-	    }
-	    default {
-	    	warn "prev '$prev_cont_flag' now '$contflags[$c]'";
-	    }
+	my $cf = "$prev_cont_flag$contflags[$c]";
+	if ($cf =~ /[X_ ]_/) {
+	} elsif ($cf =~ /[X_ ]\./) {
+	    unshift(@mv_end, $c);
+	} elsif ($cf =~ /[X_ ];/) {
+	    unshift(@st_end, $c);
+	} elsif ($cf =~ /[X_] /) {
+	    $contflags[$c] = ".";
+	    unshift(@mv_end, $c);
+	} elsif ($cf =~ /[;. ] /) {
+	} else {
+	    warn "prev '$prev_cont_flag' now '$contflags[$c]'";
 	}
 	$prev_cont_flag = $contflags[$c];
     }

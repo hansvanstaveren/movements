@@ -1,5 +1,34 @@
 #!/usr/bin/perl -w
 
+use Config;
+
+$balansbin = "./balans.linux";
+$balans_kan = 1;
+
+sub set_balansbin {
+    #
+    # Linux or Windows?
+    #
+
+    $os = $Config{'osname'};
+
+    #
+    # Call balans and parse and proces diagnostic output
+    # The generated file by balans is *not used
+    #
+
+    unless ($os =~ /linux/) {
+	$balansbin = "./balans.exe";
+    }
+
+    # print "Balansbin determined to be $balansbin\n";
+
+    unless (-e $balansbin) {
+    	print "$balansbin niet gevonden!!\nbalans optie zal niet werken.\n";
+	$balans_kan = 0;
+    }
+}
+
 #
 # TODO:
 #
@@ -136,6 +165,8 @@ if ($complete) {
 @groupsizes = ();
 $tablesleft = $pairs/2;
 
+set_balansbin();
+
 #
 # Eerst basis-groot schemaas
 #
@@ -258,7 +289,7 @@ for $ses (1..$sessions) {
 		    my $beginschema = $ses_sch;
 		    $beginschema =~ s/ [^\s]*$//;
 		    execute("manipulate $beginschema draai: out:$sestemp");
-		    execute("balans -r 1 -m $vastbegin $sestemp >_mtrn_balansout");
+		    execute("$balansbin -r 1 -m $vastbegin $sestemp >_mtrn_balansout");
 		}
 		$ses_sch =~ s/.* /$vastbegin /;
 	    }
@@ -299,6 +330,6 @@ $renauto = $usp ? "renumber:cont:auto:auto " : "";
 $allsplit = join(',', ($rounds) x $sessions);
 execute("manipulate combine:vertical $allses out:_mtrn_tot");
 $fixarg = defined($fixfile) ? "-a $fixfile" : "-r 1";
-execute("balans $fixarg -s $samples -m _mtrn_totbal _mtrn_tot >_mtrn_balansout");
+execute("$balansbin $fixarg -s $samples -m _mtrn_totbal _mtrn_tot >_mtrn_balansout");
 $splitarg = $nosplit ? "" : "split:vertical:$allsplit";
 execute("manipulate $renauto$splitarg _mtrn_totbal out:$name.asc");
