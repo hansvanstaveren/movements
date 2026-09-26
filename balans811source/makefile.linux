@@ -1,0 +1,183 @@
+BALANS= .
+RANDOM= $(BALANS)/random
+SFMT= $(RANDOM)/SFMT
+VPATH= $(RANDOM):$(SFMT)
+
+RANDOMFLAGS = -DSFMT_MEXP=19937 -I$(SFMT)
+
+# Machine/architecture dependent C flags:
+ifdef MAKE_MVER
+# Makefile-based multiversioning.  If MAKE_MVER is defined, -DUSE_MVER must be used too and vice versa.
+# Use this if you want your build to run well on strong as well as weak 64-bit CPUs (with/without AVX2 etc).
+MFLAGS = -DUSE_MVER -DHAVE_SSE2
+# Attempt tunings that will benefit most users without hurting anyone too much.
+#   haswell-tuning may be a bit better for znver3 but hurts Intel Skylake family CPUs more than it benefits AMD
+AVX2TUNE = -mtune=skylake
+AVXTUNE = -mtune=sandybridge
+else
+MFLAGS = -march=native -DHAVE_SSE2
+# -DUSE_FMA_LOGF recommended if your arch has hardware-based fused multiply-add (FMA) or you use clang:
+#MFLAGS = -march=skylake -DUSE_FMA_LOGF -DHAVE_SSE2
+endif
+
+# NB: * -flto sometimes speeds up balans, especially with clang, in other cases it slows down; test carefully
+#     * SFMT works fine with gcc 7.3 -O3 without -fno-strict-aliasing in spite of warning at SFMT home page
+#     * It is essential to use -ffast-math to benefit fully from vectorisation
+#     * PGO (using -fprofile-generate, collecting data, rebuilding with -fprofile-use) also often gives
+#       significant speedups of balans, e.g. factor 1.43 for clang on Skylake seen; but do that by hand
+#DFLAGS = -O3 -ffast-math -flto -Wall -Wextra -Wshadow
+DFLAGS = -O3 -ffast-math -Wall -Wextra -Wshadow
+DBGFLAGS = -Og -g -fsanitize=undefined -fsanitize=address -ftrapv -D_FORTIFY_SOURCE=2 -Wall -Wextra -Wshadow
+OMPFLAGS = -fopenmp
+
+CFLAGS = $(MFLAGS) $(DFLAGS) $(RANDOMFLAGS)
+
+# These CPPFLAGS were useful long ago with clang 4.0 on Intel Core i7 but probably not relevant anymore:
+#CPPFLAGS = -mllvm -inlinehint-threshold=1800
+CPPFLAGS =
+
+# LDFLAGS is useful when compiling/linking with clang
+#LDFLAGS = -fuse-ld=lld
+LDFLAGS =
+
+#CC = i686-w64-mingw32-gcc
+#CC = clang -Rpass=vector -flto -mstack-alignment=32 -mstackrealign
+#CC = gcc -fopt-info-vec
+# With gcc 9 -fvect-cost-model=unlimited was recommended, gained 10% performance; with gcc 12 use PGO instead
+#CC = gcc -fvect-cost-model=unlimited
+CC = gcc
+
+LDLIBS = -lm
+
+# Only for testing linking with shared balans library:
+SHLDFLAGS = -L. -Wl,-rpath,. -lbaloptim
+
+RANDOMSRC = $(RANDOM)/raninit.c $(SFMT)/SFMT.c
+RANDOMOBJS = raninit.o SFMT.o
+RANDOMHEAD = $(RANDOM)/raninit.h $(RANDOM)/logf_def.h $(SFMT)/SFMT.h $(SFMT)/SFMT-common.h \
+	     $(SFMT)/SFMT-params.h $(SFMT)/SFMT-params19937.h $(SFMT)/SFMT-sse2.h
+
+READMOVEOBJS = readmove.o ugets.o
+MOVINFOOBJS  = inspect.o common.o orderb.o readmvi.o
+
+ifdef MAKE_MVER   # Makefile-based multiversioning
+IMPROVE2FILES = improve2_avx2.o improve2_avx.o improve2_default.o
+else
+IMPROVE2FILES = improve2.c
+endif
+
+BALANSOBJS0 = balans.o balans1.o $(MOVINFOOBJS) $(READMOVEOBJS) optim.o initf.o
+
+READMOVESRC = $(READMOVEOBJS:.o=.c)
+BALANSSRC0   = $(BALANSOBJS0:.o=.c)
+
+COMMONFILES = $(BALANSSRC0) $(IMPROVE2FILES) $(RANDOMSRC)
+BALANS4FILES = balans4.c $(COMMONFILES)
+
+# For testing shared library build:
+SHLIBSRC = optim.c orderb.c improve2.c initf.c balans1.c $(RANDOMSRC)
+# Giving balans5 its own copies of orderb.c and RANDOMSRC works ok, but is waste of space
+#BALANS5SRC = balans.c common.c inspect.c readmvi.c orderb.c $(READMOVESRC) $(RANDOMSRC)
+BALANS5SRC = balans.c common.c inspect.c readmvi.c $(READMOVESRC)
+
+PAIRSSRC = $(READMOVESRC) FQf.c
+
+RANLOGFSRC = $(RANDOM)/ranlogftest.c $(RANDOMSRC)
+
+OPTIMH  = optim.h Verbose.h
+ORDERBH = readmove.h orderb.h
+READMVIH = $(ORDERBH) readmvi.h
+BALANSH = balans.h Verbose.h $(READMVIH) $(RANDOMHEAD)
+COMMONH = common.h inspect.h $(BALANSH)
+
+IMPROVE2DEPS = improve2.c $(RANDOMHEAD) $(OPTIMH)
+
+#PROGS = balans balansmp vernum score2 pairs
+PROGS = balans vernum score2 pairs
+XPROGS = balans-debug readmove balans4 balans5 btest ranlogftest
+SHLIBS = libbaloptim.so
+
+all:    $(PROGS)
+
+xall: all $(XPROGS)
+
+balans.o:     $(COMMONH)
+score2.o:     $(COMMONH)
+vernum.o:     $(COMMONH) sorttables.h
+common.o:     $(COMMONH)
+balans1.o:    $(BALANSH)
+optim.o:      $(BALANSH) optim.h
+improve2.o:   $(IMPROVE2DEPS)
+raninit.o:    $(RANDOMHEAD)
+initf.o:      $(OPTIMH)
+inspect.o:    $(ORDERBH) inspect.h
+sorttables.o: $(ORDERBH) sorttables.h
+orderb.o:     $(ORDERBH)
+readmvi.o:    $(READMVIH)
+readmove.o:   readmove.h
+test.o:       $(READMVIH)
+ranlogftest.o: $(RANDOMHEAD)
+
+# General rule used for score2 and other non-balans* programs, so no OMPFLAGS here
+.c.o:
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $<
+
+###############
+# Makefile-based multiversioning works well for clang as well as gcc (attribute-based doesn't for clang w/ omp).
+#   MFLAGS must still contain -DUSE_MVER since we need the multiversioning support in raninit.[ch] too.
+#
+improve2_avx2.o: $(IMPROVE2DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(OMPFLAGS) -DMVER_AVX2 -mavx2 -mfma $(AVX2TUNE) -c improve2.c -o $@
+
+improve2_avx.o: $(IMPROVE2DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(OMPFLAGS) -DMVER_AVX -mavx $(AVXTUNE) -c improve2.c -o $@
+
+improve2_default.o: $(IMPROVE2DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(OMPFLAGS) -DMVER_DEFAULT -c improve2.c -o $@
+
+###############
+
+balans: $(COMMONFILES) $(COMMONH) $(OPTIMH)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(OMPFLAGS) $(LDFLAGS) $(COMMONFILES) -o $@ $(LDLIBS)
+
+balans-debug: $(COMMONFILES) $(COMMONH) $(OPTIMH)
+	$(CC) $(DBGFLAGS) $(OMPFLAGS) $(RANDOMFLAGS) $(LDFLAGS) $(COMMONFILES) -o $@ $(LDLIBS)
+
+# balans as subprogram, just for testing (on Linux using xargs(1) is generally more useful):
+balans4: $(BALANS4FILES) $(COMMONH) $(OPTIMH)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DSUBPROGRAM $(OMPFLAGS) $(LDFLAGS) $(BALANS4FILES) -o $@ $(LDLIBS)
+
+# shared library in simplest possible way (unversioned):
+libbaloptim.so: $(SHLIBSRC) optim.h $(BALANSH)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -shared $(OMPFLAGS) $(LDFLAGS) $(SHLIBSRC) -o $@ $(LDLIBS)
+
+# balans5: separate main program and shared library; hack in an rpath to ease testing, not for production
+balans5: $(BALANS5SRC) $(COMMONH) libbaloptim.so
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(OMPFLAGS) $(LDFLAGS) $(BALANS5SRC) $(SHLDFLAGS) -o $@ $(LDLIBS)
+
+readmove: $(READMOVESRC) readmove.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -Dstandalone $(READMOVESRC) -o $@
+
+pairs:	$(PAIRSSRC) readmove.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -Dpairs $(PAIRSSRC) -o $@
+
+score2: score2.o $(MOVINFOOBJS) $(READMOVEOBJS) $(RANDOMOBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@ $(LDLIBS)
+
+vernum: vernum.o $(MOVINFOOBJS) $(READMOVEOBJS) balans1.o sorttables.o $(RANDOMOBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@ $(LDLIBS)
+
+btest:  test.o $(READMOVEOBJS) readmvi.o
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@ $(LDLIBS)
+
+ranlogftest: $(RANLOGFSRC) $(RANDOMHEAD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $(RANLOGFSRC) -o $@ $(LDLIBS)
+
+strip:
+	strip -p $(PROGS)
+
+mostlyclean:
+	$(RM) *.o klad* _balans.txt
+
+clean: mostlyclean
+	$(RM) $(PROGS) $(XPROGS) $(SHLIBS)

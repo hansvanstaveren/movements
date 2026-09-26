@@ -3879,31 +3879,29 @@ sub interactive {
 	my $argtype = initial_strm(\@ia_ar, $cmd, 0);
 	debug("interactive", 5, "cmd $cmd, => ", $argtype);
 	eval {
-	    given ($argtype) {
-		when (IA_LEES) {
-		    my $file;
-		    do {
-			my $filename = prompt_and_read(1, "file");
-			debug("interactive", 5, "file = $filename");
-			$file = findfile($filename);
-		    } until (defined($file));
-		    schema_start();
-		    readfile($file);
-		    schema_klaar();
-		    $modified=1;
-		}
-		when (IA_DRAAI) {
-		    my $rnds = prompt_and_read(1, "ronde(s)");
-		    my $conts = prompt_and_read(2, "deelnemer(s)");
-		    $conts = undef if ($conts eq "");
-		    do_draai(\%data_in, $rnds, $conts);
-		    $modified = 1;
-		}
-		when (IA_SCHEMA) {
-		    my $schema_seq = prompt_and_read(1, "schema");
-		    restore_status($save_hash{$schema_seq});
-		    $modified = 1;
-		}
+	    if ($argtype eq "IA_LEES") {
+		my $file;
+		do {
+		    my $filename = prompt_and_read(1, "file");
+		    debug("interactive", 5, "file = $filename");
+		    $file = findfile($filename);
+		} until (defined($file));
+		schema_start();
+		readfile($file);
+		schema_klaar();
+		$modified=1;
+	    }
+	    elsif ($argtype eq "IA_DRAAI") {
+		my $rnds = prompt_and_read(1, "ronde(s)");
+		my $conts = prompt_and_read(2, "deelnemer(s)");
+		$conts = undef if ($conts eq "");
+		do_draai(\%data_in, $rnds, $conts);
+		$modified = 1;
+	    }
+	    elsif ($argtype eq "IA_SCHEMA") {
+		my $schema_seq = prompt_and_read(1, "schema");
+		restore_status($save_hash{$schema_seq});
+		$modified = 1;
 	    }
 	};
 	unless ($@ eq "") {

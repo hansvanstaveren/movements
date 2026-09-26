@@ -1,0 +1,9 @@
+#! /bin/bash
+# the numbers output should be randomly distributed
+if [ `expr "$OS " : 'Win*'` -ge 3 ] ; then
+ gcc -Wall -Wextra -DQPC -DSFMT_MEXP=19937 -ISFMT raninittest.c raninit.c SFMT/SFMT.c -lm -o raninittest
+else 
+ gcc -Wall -Wextra -DSFMT_MEXP=19937 -ISFMT raninittest.c raninit.c SFMT/SFMT.c -lm -o raninittest
+fi 
+./raninittest
+rm -f raninittest raninittest.exe
